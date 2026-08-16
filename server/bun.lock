@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "chrome-mcp",
+      "name": "alloy-mcp",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.30.0",
         "zod": "^3.25.76",

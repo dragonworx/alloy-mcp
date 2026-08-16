@@ -46,7 +46,7 @@ export const defaultConfig: ServerConfig = {
     level: "info",
   },
   security: {
-    outputDirectory: resolve(process.env.CHROME_MCP_OUTPUT_DIR || "artifacts"),
+    outputDirectory: resolve(process.env.ALLOY_MCP_OUTPUT_DIR || "artifacts"),
   },
 };
 

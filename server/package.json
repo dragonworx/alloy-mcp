@@ -1,7 +1,7 @@
 {
-  "name": "chrome-mcp",
+  "name": "alloy-mcp",
   "version": "1.0.0",
-  "description": "MCP server for controlling Chrome browser via a Chrome extension bridge",
+  "description": "Alloy MCP server - bridges MCP tool calls to Chrome through a paired extension",
   "type": "module",
   "main": "src/server.ts",
   "scripts": {

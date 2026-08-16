@@ -36,17 +36,17 @@ describe("pairing authentication", () => {
   });
 
   test("loads tokens only from private regular files", () => {
-    const root = mkdtempSync(join(tmpdir(), "chrome-mcp-auth-"));
+    const root = mkdtempSync(join(tmpdir(), "alloy-mcp-auth-"));
     const directory = join(root, "private");
     const tokenPath = join(directory, "token");
     mkdirSync(directory, { mode: 0o700 });
     writeFileSync(tokenPath, token, { mode: 0o600 });
-    const previousToken = process.env.CHROME_MCP_TOKEN;
-    const previousPath = process.env.CHROME_MCP_TOKEN_FILE;
+    const previousToken = process.env.ALLOY_MCP_TOKEN;
+    const previousPath = process.env.ALLOY_MCP_TOKEN_FILE;
 
     try {
-      delete process.env.CHROME_MCP_TOKEN;
-      process.env.CHROME_MCP_TOKEN_FILE = tokenPath;
+      delete process.env.ALLOY_MCP_TOKEN;
+      process.env.ALLOY_MCP_TOKEN_FILE = tokenPath;
       expect(loadPairingToken()).toBe(token);
 
       chmodSync(tokenPath, 0o644);
@@ -55,17 +55,17 @@ describe("pairing authentication", () => {
 
       const linkedPath = join(directory, "linked-token");
       symlinkSync(tokenPath, linkedPath);
-      process.env.CHROME_MCP_TOKEN_FILE = linkedPath;
+      process.env.ALLOY_MCP_TOKEN_FILE = linkedPath;
       expect(() => loadPairingToken()).toThrow();
 
-      process.env.CHROME_MCP_TOKEN_FILE = tokenPath;
+      process.env.ALLOY_MCP_TOKEN_FILE = tokenPath;
       chmodSync(directory, 0o755);
       expect(() => loadPairingToken()).toThrow("must not be accessible by group or other users");
     } finally {
-      if (previousToken == null) delete process.env.CHROME_MCP_TOKEN;
-      else process.env.CHROME_MCP_TOKEN = previousToken;
-      if (previousPath == null) delete process.env.CHROME_MCP_TOKEN_FILE;
-      else process.env.CHROME_MCP_TOKEN_FILE = previousPath;
+      if (previousToken == null) delete process.env.ALLOY_MCP_TOKEN;
+      else process.env.ALLOY_MCP_TOKEN = previousToken;
+      if (previousPath == null) delete process.env.ALLOY_MCP_TOKEN_FILE;
+      else process.env.ALLOY_MCP_TOKEN_FILE = previousPath;
       chmodSync(directory, 0o700);
       rmSync(root, { recursive: true });
     }

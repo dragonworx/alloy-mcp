@@ -24,7 +24,7 @@ function stopBridge(): void {
 
 // Create MCP server
 const mcp = new McpServer({
-  name: "chrome",
+  name: "alloy",
   version: "1.0.0",
 });
 
@@ -127,7 +127,7 @@ logger.info("Waiting for Claude Code MCP connection via stdio...");
 await mcp.connect(transport as unknown as DualStdioTransport);
 
 logger.info("✓ Claude Code connected to MCP server via stdio");
-logger.info("Chrome MCP Server started");
+logger.info("Alloy MCP Server started");
 logger.info(`WebSocket: ws://${config.websocket.host}:${config.websocket.port}`);
 logger.info(`Tools registered: ${Object.keys(allTools).length}`);
 

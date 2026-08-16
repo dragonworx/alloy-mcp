@@ -42,7 +42,7 @@ async function createPairingProof(token, role, serverNonce, extensionNonce, conf
   );
   const confirmationContext = confirmationNonce ? `:${confirmationNonce}` : "";
   const payload = new TextEncoder().encode(
-    `chrome-mcp-v1:${role}:${serverNonce}:${extensionNonce}${confirmationContext}`
+    `alloy-mcp-v1:${role}:${serverNonce}:${extensionNonce}${confirmationContext}`
   );
   const signature = await crypto.subtle.sign("HMAC", key, payload);
   return Array.from(new Uint8Array(signature), byte => byte.toString(16).padStart(2, "0")).join("");

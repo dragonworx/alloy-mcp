@@ -16,23 +16,23 @@ const TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
 const PROOF_PATTERN = /^[a-f0-9]{64}$/i;
 
 export function getPairingTokenPath(): string {
-  return process.env.CHROME_MCP_TOKEN_FILE || join(homedir(), ".config", "chrome-mcp", "token");
+  return process.env.ALLOY_MCP_TOKEN_FILE || join(homedir(), ".config", "alloy-mcp", "token");
 }
 
 export function validatePairingToken(token: string): string {
   const normalized = token.trim().toLowerCase();
   if (!TOKEN_PATTERN.test(normalized)) {
-    throw new Error("Chrome MCP pairing token must contain exactly 64 hexadecimal characters");
+    throw new Error("Alloy MCP pairing token must contain exactly 64 hexadecimal characters");
   }
   return normalized;
 }
 
 function assertPrivateOwner(path: string, uid: number, mode: number): void {
   if (typeof process.getuid === "function" && uid !== process.getuid()) {
-    throw new Error(`Chrome MCP pairing path must be owned by the current user: ${path}`);
+    throw new Error(`Alloy MCP pairing path must be owned by the current user: ${path}`);
   }
   if ((mode & 0o077) !== 0) {
-    throw new Error(`Chrome MCP pairing path must not be accessible by group or other users: ${path}`);
+    throw new Error(`Alloy MCP pairing path must not be accessible by group or other users: ${path}`);
   }
 }
 
@@ -40,7 +40,7 @@ function assertPrivateTokenDirectory(tokenPath: string): void {
   const directory = dirname(tokenPath);
   const stats = lstatSync(directory);
   if (!stats.isDirectory() || stats.isSymbolicLink()) {
-    throw new Error(`Chrome MCP pairing token directory must be a real directory: ${directory}`);
+    throw new Error(`Alloy MCP pairing token directory must be a real directory: ${directory}`);
   }
   assertPrivateOwner(directory, stats.uid, stats.mode);
 }
@@ -51,7 +51,7 @@ function readPairingTokenFile(tokenPath: string): string {
   try {
     const stats = fstatSync(descriptor);
     if (!stats.isFile() || stats.nlink !== 1) {
-      throw new Error(`Chrome MCP pairing token must be a regular, singly linked file: ${tokenPath}`);
+      throw new Error(`Alloy MCP pairing token must be a regular, singly linked file: ${tokenPath}`);
     }
     assertPrivateOwner(tokenPath, stats.uid, stats.mode);
     return validatePairingToken(readFileSync(descriptor, "utf8"));
@@ -61,8 +61,8 @@ function readPairingTokenFile(tokenPath: string): string {
 }
 
 export function loadPairingToken(): string {
-  if (process.env.CHROME_MCP_TOKEN) {
-    return validatePairingToken(process.env.CHROME_MCP_TOKEN);
+  if (process.env.ALLOY_MCP_TOKEN) {
+    return validatePairingToken(process.env.ALLOY_MCP_TOKEN);
   }
 
   const tokenPath = getPairingTokenPath();
@@ -89,7 +89,7 @@ export function createPairingProof(
 ): string {
   const confirmationContext = confirmationNonce ? `:${confirmationNonce}` : "";
   return createHmac("sha256", Buffer.from(validatePairingToken(token), "hex"))
-    .update(`chrome-mcp-v1:${role}:${serverNonce}:${extensionNonce}${confirmationContext}`)
+    .update(`alloy-mcp-v1:${role}:${serverNonce}:${extensionNonce}${confirmationContext}`)
     .digest("hex");
 }
 

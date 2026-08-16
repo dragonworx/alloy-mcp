@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "minimum_chrome_version": "116",
-  "name": "Chrome MCP",
+  "name": "Alloy MCP",
   "version": "1.0.0",
-  "description": "Bridge between MCP server and Chrome browser for LLM-driven browser control",
+  "description": "Alloy MCP - bridges the local MCP server to your Chrome profile for AI-driven browser control",
   "permissions": [
     "tabs",
     "scripting",
@@ -30,7 +30,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Chrome MCP"
+    "default_title": "Alloy MCP"
   },
   "icons": {}
 }

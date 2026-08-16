@@ -1,6 +1,6 @@
 # Security
 
-Chrome MCP intentionally controls an already-authenticated browser profile. Its permissions are powerful: tabs, all page origins, scripting, cookies, downloads, request rules, and the Chrome debugger.
+Alloy MCP intentionally controls an already-authenticated browser profile. Its permissions are powerful: tabs, all page origins, scripting, cookies, downloads, request rules, and the Chrome debugger.
 
 ## Trust Model
 
@@ -14,7 +14,7 @@ Do not expose the WebSocket port through a tunnel, proxy, container port mapping
 
 ## Pairing
 
-The server creates a random 256-bit token at `~/.config/chrome-mcp/token` with mode `0600`, unless `CHROME_MCP_TOKEN` or `CHROME_MCP_TOKEN_FILE` is configured. File-based tokens are accepted only from a user-owned `0700` directory and a user-owned, singly linked regular file with no group or other access. Symbolic links are rejected.
+The server creates a random 256-bit token at `~/.config/alloy-mcp/token` with mode `0600`, unless `ALLOY_MCP_TOKEN` or `ALLOY_MCP_TOKEN_FILE` is configured. File-based tokens are accepted only from a user-owned `0700` directory and a user-owned, singly linked regular file with no group or other access. Symbolic links are rejected.
 
 The WebSocket protocol uses fresh server and extension nonces. Each peer proves possession of the token with a role- and phase-bound HMAC-SHA-256 proof. After the extension proof is verified, the server issues a fresh confirmation nonce; the extension's final proof is bound to that nonce and the distinct `extension-confirmation` phase. The token itself is never transmitted, and an initial or captured proof cannot be replayed as final confirmation.
 
@@ -22,7 +22,7 @@ The server does not consider a socket connected until the extension confirms the
 
 To rotate the token:
 
-1. Stop Chrome MCP servers.
+1. Stop Alloy MCP servers.
 2. Remove or replace the token file.
 3. Run `bun run pair`.
 4. Enter the new token in the extension popup.
@@ -46,7 +46,7 @@ Origin filtering is defense in depth. Pairing authentication is the security bou
 
 Tool arguments may contain passwords, cookies, storage values, uploaded files, or JavaScript. The logger records tool names and protocol state only; it does not persist arguments, results, or browsing URLs.
 
-Screenshot file output is confined to `CHROME_MCP_OUTPUT_DIR` (default `./artifacts`). The output tree must be owned by the current user and must not be group- or world-writable. Traversal, symbolic-link escapes, non-regular targets, and files with multiple hard links are rejected.
+Screenshot file output is confined to `ALLOY_MCP_OUTPUT_DIR` (default `./artifacts`). The output tree must be owned by the current user and must not be group- or world-writable. Traversal, symbolic-link escapes, non-regular targets, and files with multiple hard links are rejected.
 
 MCP image responses and tool results still pass through the configured MCP client and model. Apply that client's data-handling policy to any page being automated.
 

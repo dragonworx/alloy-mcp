@@ -1,11 +1,11 @@
 {
-  "name": "chrome-mcp",
+  "name": "alloy-mcp",
   "version": "1.0.0",
-  "description": "Chrome MCP - Control Chrome browser via Model Context Protocol",
+  "description": "Alloy MCP - drive your existing Chrome profile from an MCP client",
   "type": "module",
   "scripts": {
-    "add-to-claude": "claude mcp add chrome -- bun run \"$(pwd)/server/src/server.ts\"",
-    "remove-from-claude": "claude mcp remove chrome",
+    "add-to-claude": "claude mcp add alloy -- bun run \"$(pwd)/server/src/server.ts\"",
+    "remove-from-claude": "claude mcp remove alloy",
     "setup": "cd server && bun install --frozen-lockfile && cd .. && bun run pair",
     "dev": "bun --watch run server/src/server.ts",
     "start": "bun run server/src/server.ts",
@@ -19,6 +19,7 @@
     "open-fixture": "open test/test-target.html"
   },
   "keywords": [
+    "alloy",
     "mcp",
     "model-context-protocol",
     "chrome",

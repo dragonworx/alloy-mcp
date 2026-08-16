@@ -22,7 +22,7 @@ afterEach(() => {
 
 describe("output path confinement", () => {
   test("allows nested paths inside the output directory", () => {
-    const root = mkdtempSync(join(tmpdir(), "chrome-mcp-paths-"));
+    const root = mkdtempSync(join(tmpdir(), "alloy-mcp-paths-"));
     roots.push(root);
     expect(prepareOutputFile(root, "screenshots/page.png")).toBe(
       join(realpathSync(root), "screenshots/page.png")
@@ -30,8 +30,8 @@ describe("output path confinement", () => {
   });
 
   test("rejects traversal and symlink escapes", () => {
-    const root = mkdtempSync(join(tmpdir(), "chrome-mcp-paths-"));
-    const outside = mkdtempSync(join(tmpdir(), "chrome-mcp-outside-"));
+    const root = mkdtempSync(join(tmpdir(), "alloy-mcp-paths-"));
+    const outside = mkdtempSync(join(tmpdir(), "alloy-mcp-outside-"));
     roots.push(root, outside);
     writeFileSync(join(outside, "secret.json"), "{}");
     symlinkSync(join(outside, "secret.json"), join(root, "link.json"));
@@ -41,8 +41,8 @@ describe("output path confinement", () => {
   });
 
   test("rejects a parent symlink before creating outside directories", () => {
-    const root = mkdtempSync(join(tmpdir(), "chrome-mcp-paths-"));
-    const outside = mkdtempSync(join(tmpdir(), "chrome-mcp-outside-"));
+    const root = mkdtempSync(join(tmpdir(), "alloy-mcp-paths-"));
+    const outside = mkdtempSync(join(tmpdir(), "alloy-mcp-outside-"));
     roots.push(root, outside);
     symlinkSync(outside, join(root, "linked"));
 
@@ -51,8 +51,8 @@ describe("output path confinement", () => {
   });
 
   test("does not overwrite the target of a final symlink", () => {
-    const root = mkdtempSync(join(tmpdir(), "chrome-mcp-paths-"));
-    const outside = mkdtempSync(join(tmpdir(), "chrome-mcp-outside-"));
+    const root = mkdtempSync(join(tmpdir(), "alloy-mcp-paths-"));
+    const outside = mkdtempSync(join(tmpdir(), "alloy-mcp-outside-"));
     roots.push(root, outside);
     const outsideFile = join(outside, "secret.txt");
     writeFileSync(outsideFile, "unchanged");
@@ -63,8 +63,8 @@ describe("output path confinement", () => {
   });
 
   test("does not overwrite a file through a hard link", () => {
-    const root = mkdtempSync(join(tmpdir(), "chrome-mcp-paths-"));
-    const outside = mkdtempSync(join(tmpdir(), "chrome-mcp-outside-"));
+    const root = mkdtempSync(join(tmpdir(), "alloy-mcp-paths-"));
+    const outside = mkdtempSync(join(tmpdir(), "alloy-mcp-outside-"));
     roots.push(root, outside);
     const outsideFile = join(outside, "secret.txt");
     writeFileSync(outsideFile, "unchanged");
@@ -75,7 +75,7 @@ describe("output path confinement", () => {
   });
 
   test("rejects an output root writable by other users", () => {
-    const root = mkdtempSync(join(tmpdir(), "chrome-mcp-paths-"));
+    const root = mkdtempSync(join(tmpdir(), "alloy-mcp-paths-"));
     roots.push(root);
     chmodSync(root, 0o777);
 

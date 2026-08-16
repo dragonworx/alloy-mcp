@@ -60,7 +60,7 @@ Pointer, hover, keyboard, and text insertion use the Chrome Debugger Protocol wh
 
 `take_screenshot` supports visible viewport, `fullPage`, or `selector` capture through rate-limited visible-tab tiles. The target tab is temporarily activated for each tile and the previously active tab is restored afterward. Capture fails if another tab becomes active during a tile. A single dimension may not exceed 4096 pixels, a capture may use at most 64 tiles, and encoded image data may not exceed 24 MiB.
 
-When `filePath` is provided, it is relative to `CHROME_MCP_OUTPUT_DIR` (default `./artifacts`). The private output tree rejects traversal, symbolic links, non-regular targets, and multiply linked files. Otherwise the result is MCP image content.
+When `filePath` is provided, it is relative to `ALLOY_MCP_OUTPUT_DIR` (default `./artifacts`). The private output tree rejects traversal, symbolic links, non-regular targets, and multiply linked files. Otherwise the result is MCP image content.
 
 ## Network
 
@@ -128,7 +128,7 @@ JavaScript executes in the page's main execution context through CDP `Runtime.ev
 - `query_iframe`
 - `query_shadow_dom`
 
-Geolocation, media, and device settings use persistent CDP sessions. Call `clear_geolocation`, or call `emulate_media` / `set_device_metrics` with no override fields, to reset and detach. Chrome DevTools and Chrome MCP cannot simultaneously own the same tab's debugger session.
+Geolocation, media, and device settings use persistent CDP sessions. Call `clear_geolocation`, or call `emulate_media` / `set_device_metrics` with no override fields, to reset and detach. Chrome DevTools and Alloy MCP cannot simultaneously own the same tab's debugger session.
 
 Iframe operations are currently same-origin. Shadow DOM operations support open roots only.
 

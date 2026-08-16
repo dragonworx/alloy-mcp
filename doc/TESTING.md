@@ -39,7 +39,7 @@ Chrome extension APIs and trusted CDP input need one live-browser pass after cha
 1. Run `bun run check`.
 2. Load or reload `extension/` from `chrome://extensions`.
 3. Run `bun run pair` and pair the popup if needed.
-4. Stop other Chrome MCP server processes.
+4. Stop other Alloy MCP server processes.
 5. Start the server through the MCP client being tested.
 6. Confirm `health_check` reports an authenticated round trip.
 7. Run `bun run open-fixture` and target that tab.

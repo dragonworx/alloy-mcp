@@ -78,7 +78,7 @@ function ensureSafeParent(root: string, candidate: string): void {
     }
     assertPrivateDirectory(current);
     if (!isInside(root, realpathSync(current))) {
-      throw new Error(`Path must stay inside the Chrome MCP output directory: ${root}`);
+      throw new Error(`Path must stay inside the Alloy MCP output directory: ${root}`);
     }
   }
 }
@@ -87,7 +87,7 @@ export function prepareOutputFile(outputDirectory: string, requestedPath: string
   const root = ensureRoot(outputDirectory);
   const candidate = resolve(root, requestedPath);
   if (!isInside(root, candidate)) {
-    throw new Error(`Path must stay inside the Chrome MCP output directory: ${root}`);
+    throw new Error(`Path must stay inside the Alloy MCP output directory: ${root}`);
   }
   if (candidate === root) throw new Error("Output path must name a file");
 

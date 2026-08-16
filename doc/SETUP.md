@@ -1,6 +1,6 @@
 # MCP Client And Local Development Setup
 
-Chrome MCP consists of two local processes with one shared pairing token:
+Alloy MCP consists of two local processes with one shared pairing token:
 
 ```text
 agent --stdio--> Bun MCP server --localhost WebSocket--> Chrome extension
@@ -21,11 +21,11 @@ This command installs the exact dependencies in `server/bun.lock`, creates a 256
 1. Open `chrome://extensions` in Chrome.
 2. Enable **Developer mode**.
 3. Select **Load unpacked** and choose the repository's `extension/` directory.
-4. Open the Chrome MCP extension popup and paste the printed token.
+4. Open the Alloy MCP extension popup and paste the printed token.
 5. Add one of the MCP client configurations below.
 6. Restart or reload that MCP client, then call `ping`, `health_check`, and `list_tabs`.
 
-The default token file is `~/.config/chrome-mcp/token`. Do not put the token in an MCP configuration file. Both processes read the same local token independently.
+The default token file is `~/.config/alloy-mcp/token`. Do not put the token in an MCP configuration file. Both processes read the same local token independently.
 
 ## Configuration Values
 
@@ -38,18 +38,18 @@ command -v bun
 In the examples below, replace:
 
 - `/absolute/path/to/bun` with that command's output
-- `/absolute/path/to/chrome-mcp` with this repository's absolute path
+- `/absolute/path/to/alloy-mcp` with this repository's absolute path
 
-Use an absolute `CHROME_MCP_OUTPUT_DIR` for clients that do not support a working directory. It keeps screenshots in the repository regardless of where the client starts the server.
+Use an absolute `ALLOY_MCP_OUTPUT_DIR` for clients that do not support a working directory. It keeps screenshots in the repository regardless of where the client starts the server.
 
 ## VS Code And GitHub Copilot
 
-Create `.vscode/mcp.json` in the workspace that should use Chrome MCP:
+Create `.vscode/mcp.json` in the workspace that should use Alloy MCP:
 
 ```json
 {
   "servers": {
-    "chrome": {
+    "alloy": {
       "type": "stdio",
       "command": "bun",
       "args": ["run", "server/src/server.ts"],
@@ -59,19 +59,19 @@ Create `.vscode/mcp.json` in the workspace that should use Chrome MCP:
 }
 ```
 
-Open the **MCP: List Servers** command in VS Code, start `chrome`, and approve its tools when prompted. If VS Code cannot find Bun, replace `"bun"` with its absolute path.
+Open the **MCP: List Servers** command in VS Code, start `alloy`, and approve its tools when prompted. If VS Code cannot find Bun, replace `"bun"` with its absolute path.
 
-When Chrome MCP lives outside the active workspace, use absolute server and output paths instead:
+When Alloy MCP lives outside the active workspace, use absolute server and output paths instead:
 
 ```json
 {
   "servers": {
-    "chrome": {
+    "alloy": {
       "type": "stdio",
       "command": "/absolute/path/to/bun",
-      "args": ["run", "/absolute/path/to/chrome-mcp/server/src/server.ts"],
+      "args": ["run", "/absolute/path/to/alloy-mcp/server/src/server.ts"],
       "env": {
-        "CHROME_MCP_OUTPUT_DIR": "/absolute/path/to/chrome-mcp/artifacts"
+        "ALLOY_MCP_OUTPUT_DIR": "/absolute/path/to/alloy-mcp/artifacts"
       }
     }
   }
@@ -105,37 +105,37 @@ Cursor (`.cursor/mcp.json`), Cline's MCP server settings, Claude Desktop, Claude
 ```json
 {
   "mcpServers": {
-    "chrome": {
+    "alloy": {
       "command": "/absolute/path/to/bun",
-      "args": ["run", "/absolute/path/to/chrome-mcp/server/src/server.ts"],
+      "args": ["run", "/absolute/path/to/alloy-mcp/server/src/server.ts"],
       "env": {
-        "CHROME_MCP_OUTPUT_DIR": "/absolute/path/to/chrome-mcp/artifacts"
+        "ALLOY_MCP_OUTPUT_DIR": "/absolute/path/to/alloy-mcp/artifacts"
       }
     }
   }
 }
 ```
 
-For Cline, open **MCP Servers > Configure MCP Servers** and merge the `chrome` entry into the existing `mcpServers` object. For Cursor, open **Settings > Tools & Integrations > MCP** after saving the project file and enable `chrome`. For Gemini CLI, restart the CLI after editing its settings file and run `/mcp` to inspect the connection.
+For Cline, open **MCP Servers > Configure MCP Servers** and merge the `alloy` entry into the existing `mcpServers` object. For Cursor, open **Settings > Tools & Integrations > MCP** after saving the project file and enable `alloy`. For Gemini CLI, restart the CLI after editing its settings file and run `/mcp` to inspect the connection.
 
-Do not replace an existing `mcpServers` object wholesale; merge the `chrome` property with any servers already configured.
+Do not replace an existing `mcpServers` object wholesale; merge the `alloy` property with any servers already configured.
 
 ## Codex CLI
 
 Add this block to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.chrome]
+[mcp_servers.alloy]
 command = "/absolute/path/to/bun"
-args = ["run", "/absolute/path/to/chrome-mcp/server/src/server.ts"]
+args = ["run", "/absolute/path/to/alloy-mcp/server/src/server.ts"]
 startup_timeout_sec = 20
 tool_timeout_sec = 60
 
-[mcp_servers.chrome.env]
-CHROME_MCP_OUTPUT_DIR = "/absolute/path/to/chrome-mcp/artifacts"
+[mcp_servers.alloy.env]
+ALLOY_MCP_OUTPUT_DIR = "/absolute/path/to/alloy-mcp/artifacts"
 ```
 
-Restart Codex and use its MCP server listing command to confirm that `chrome` is enabled.
+Restart Codex and use its MCP server listing command to confirm that `alloy` is enabled.
 
 ## Any Other MCP Agent
 
@@ -143,8 +143,8 @@ Configure a local **stdio** transport with:
 
 ```text
 command: /absolute/path/to/bun
-arguments: run /absolute/path/to/chrome-mcp/server/src/server.ts
-environment: CHROME_MCP_OUTPUT_DIR=/absolute/path/to/chrome-mcp/artifacts
+arguments: run /absolute/path/to/alloy-mcp/server/src/server.ts
+environment: ALLOY_MCP_OUTPUT_DIR=/absolute/path/to/alloy-mcp/artifacts
 ```
 
 The client must send MCP over stdin/stdout and leave stderr available for diagnostics. Do not configure the localhost WebSocket as the MCP endpoint; that connection is private to the Chrome extension and uses a separate authenticated protocol.
@@ -169,7 +169,7 @@ bun run dev
 After changing extension code:
 
 1. Open `chrome://extensions`.
-2. Select **Reload** on Chrome MCP.
+2. Select **Reload** on Alloy MCP.
 3. Restart the MCP server from the client.
 4. Call `health_check` before testing other tools.
 
@@ -179,9 +179,9 @@ Use `bun run open-fixture` for the local HTML acceptance page. Enable **Allow ac
 
 | Variable | Purpose |
 | --- | --- |
-| `CHROME_MCP_OUTPUT_DIR` | Absolute or working-directory-relative screenshot output directory |
-| `CHROME_MCP_TOKEN` | Externally managed 64-character hexadecimal token |
-| `CHROME_MCP_TOKEN_FILE` | Alternate pairing-token file path |
+| `ALLOY_MCP_OUTPUT_DIR` | Absolute or working-directory-relative screenshot output directory |
+| `ALLOY_MCP_TOKEN` | Externally managed 64-character hexadecimal token |
+| `ALLOY_MCP_TOKEN_FILE` | Alternate pairing-token file path |
 
 Prefer the owner-only token file created by `bun run setup`. Environment variables can be visible to process inspection and client diagnostics.
 
@@ -197,12 +197,12 @@ Use the absolute path from `command -v bun` in the client configuration. This is
 
 ### Port 3001 is already in use
 
-Another MCP client, `bun run start`, or `bun run dev` already owns the extension connection. Stop it and let exactly one client start Chrome MCP. The server intentionally does not terminate other processes.
+Another MCP client, `bun run start`, or `bun run dev` already owns the extension connection. Stop it and let exactly one client start Alloy MCP. The server intentionally does not terminate other processes.
 
 ### The server connects to the wrong output directory
 
-Set `CHROME_MCP_OUTPUT_DIR` to an absolute path in the client configuration. Relative paths resolve from the client's server working directory.
+Set `ALLOY_MCP_OUTPUT_DIR` to an absolute path in the client configuration. Relative paths resolve from the client's server working directory.
 
 ### Tools do not reflect an extension edit
 
-Reload Chrome MCP at `chrome://extensions`, then restart the MCP server. MV3 service workers can retain the previously loaded source until the extension is explicitly reloaded.
+Reload Alloy MCP at `chrome://extensions`, then restart the MCP server. MV3 service workers can retain the previously loaded source until the extension is explicitly reloaded.

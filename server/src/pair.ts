@@ -1,9 +1,9 @@
 import { getPairingTokenPath, loadPairingToken } from "./auth.js";
 
 const token = loadPairingToken();
-const source = process.env.CHROME_MCP_TOKEN ? "CHROME_MCP_TOKEN" : getPairingTokenPath();
+const source = process.env.ALLOY_MCP_TOKEN ? "ALLOY_MCP_TOKEN" : getPairingTokenPath();
 
-console.log("Chrome MCP pairing token:");
+console.log("Alloy MCP pairing token:");
 console.log(token);
 console.log(`\nSource: ${source}`);
-console.log("Paste this token into the Chrome MCP extension popup.");
+console.log("Paste this token into the Alloy MCP extension popup.");
