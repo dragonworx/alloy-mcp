@@ -1,0 +1,9 @@
+node_modules/
+dist/
+logs/
+*.log
+.env
+artifacts/
+server/artifacts/
+.claude/settings.local.json
+**/.claude/settings.local.json

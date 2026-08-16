@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Key Press Test Page</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 40px;
+      background: #1e1e1e;
+      color: #d4d4d4;
+    }
+    #output {
+      background: #252526;
+      border: 1px solid #3e3e42;
+      padding: 20px;
+      margin: 20px 0;
+      border-radius: 4px;
+      min-height: 200px;
+    }
+    .event {
+      padding: 8px;
+      margin: 4px 0;
+      background: #2d2d30;
+      border-left: 3px solid #007acc;
+    }
+    .success {
+      border-left-color: #4ec9b0;
+    }
+    input {
+      padding: 10px;
+      font-size: 16px;
+      width: 300px;
+      margin: 10px 0;
+    }
+    .instructions {
+      background: #264f78;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎹 Chrome MCP Key Press Test Page</h1>
+
+  <div class="instructions">
+    <h3>Test Instructions:</h3>
+    <p>This page detects keypresses. Use <code>press_key</code> tool to test:</p>
+    <pre>press_key {"key": "Enter", "tabId": &lt;TAB_ID&gt;}</pre>
+    <p>Call the tool from the configured MCP client.</p>
+  </div>
+
+  <h3><label for="test-input">Test Input Field (focus it first):</label></h3>
+  <input type="text" id="test-input" placeholder="Click here and press keys..." />
+
+  <h3>Event Log:</h3>
+  <div id="output">
+    <div class="event">Waiting for key press events...</div>
+  </div>
+
+  <button onclick="clearLog()">Clear Log</button>
+  <button onclick="focusInput()">Focus Input</button>
+
+  <script>
+    function log(message, success = false) {
+      const output = document.getElementById('output');
+      const div = document.createElement('div');
+      div.className = 'event' + (success ? ' success' : '');
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      output.appendChild(div);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    function clearLog() {
+      document.getElementById('output').innerHTML = '<div class="event">Log cleared.</div>';
+    }
+
+    function focusInput() {
+      document.getElementById('test-input').focus();
+      log('Input focused', true);
+    }
+
+    // Listen to all key events on the input
+    const input = document.getElementById('test-input');
+
+    input.addEventListener('keydown', (e) => {
+      log(`keydown: key=${e.key} code=${e.code} ctrl=${e.ctrlKey} shift=${e.shiftKey} alt=${e.altKey} meta=${e.metaKey}`, true);
+    });
+
+    input.addEventListener('keypress', (e) => {
+      log(`keypress: key=${e.key} charCode=${e.charCode}`, true);
+    });
+
+    input.addEventListener('keyup', (e) => {
+      log(`keyup: key=${e.key}`, true);
+    });
+
+    input.addEventListener('input', (e) => {
+      log(`input event: value="${e.target.value}"`, true);
+    });
+
+    // Also listen on document level
+    document.addEventListener('keydown', (e) => {
+      if (e.target !== input) {
+        log(`[Document] keydown: key=${e.key} code=${e.code}`, true);
+      }
+    });
+
+    log('Page loaded. Ready to detect keypresses.', true);
+  </script>
+</body>
+</html>

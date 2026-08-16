@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chrome MCP Test Target Page</title>
+  <meta name="description" content="A test page for Chrome MCP with various elements to interact with">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      padding: 40px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 16px;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+
+    h1 {
+      color: #667eea;
+      margin-bottom: 12px;
+      font-size: 2.5em;
+    }
+
+    h2 {
+      color: #764ba2;
+      margin: 30px 0 16px 0;
+      font-size: 1.8em;
+      border-bottom: 2px solid #eee;
+      padding-bottom: 8px;
+    }
+
+    h3 {
+      color: #555;
+      margin: 20px 0 12px 0;
+    }
+
+    .intro {
+      background: #f0f4ff;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 30px;
+      border-left: 4px solid #667eea;
+    }
+
+    .section {
+      margin: 30px 0;
+      padding: 20px;
+      background: #f9fafb;
+      border-radius: 8px;
+    }
+
+    /* Form Elements */
+    .form-group {
+      margin: 16px 0;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="number"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    button {
+      background: #4f5fc4;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      margin: 8px 8px 8px 0;
+      transition: background 0.2s;
+    }
+
+    button:hover {
+      background: #4253ae;
+    }
+
+    button.secondary {
+      background: #6c757d;
+    }
+
+    button.secondary:hover {
+      background: #5a6268;
+    }
+
+    /* Lists */
+    ul, ol {
+      margin: 16px 0;
+      padding-left: 30px;
+    }
+
+    li {
+      margin: 8px 0;
+    }
+
+    /* Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+    }
+
+    th, td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+
+    th {
+      background: #f3f4f6;
+      font-weight: 600;
+      color: #374151;
+    }
+
+    tr:hover {
+      background: #f9fafb;
+    }
+
+    /* Special Elements */
+    .hidden {
+      display: none;
+    }
+
+    .card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin: 16px 0;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      margin: 4px;
+    }
+
+    .badge.success {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .badge.warning {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .badge.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    /* Test Results */
+    #test-results {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 20px;
+      border-radius: 8px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 13px;
+      max-height: 400px;
+      overflow-y: auto;
+      margin-top: 20px;
+    }
+
+    .test-log {
+      margin: 4px 0;
+      padding: 4px 8px;
+      border-left: 3px solid #3b82f6;
+    }
+
+    .test-log.success {
+      border-left-color: #10b981;
+    }
+
+    .test-log.error {
+      border-left-color: #ef4444;
+    }
+
+    /* Code blocks */
+    code {
+      background: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 id="main-heading">Chrome MCP Test Target Page</h1>
+
+    <div class="intro">
+      <p><strong>Purpose:</strong> This page contains various HTML elements for testing Chrome MCP tools.</p>
+      <p><strong>How to use:</strong> Open this page in Chrome, then call Chrome MCP tools from the configured MCP client.</p>
+      <p><strong>Extension Required:</strong> The Chrome MCP extension must be installed and connected.</p>
+    </div>
+
+    <!-- Section 1: Text Content -->
+    <h2>📄 Text Content</h2>
+    <div class="section">
+      <h3>Headings and Paragraphs</h3>
+      <p>This is a test paragraph. The Chrome MCP can extract this text using <code>get_page_content</code>.</p>
+      <p>You can also query specific elements like this paragraph using <code>query_selector</code>.</p>
+
+      <h3>Lists</h3>
+      <ul id="test-list">
+        <li>First list item</li>
+        <li>Second list item</li>
+        <li>Third list item</li>
+      </ul>
+
+      <ol>
+        <li>Ordered item 1</li>
+        <li>Ordered item 2</li>
+        <li>Ordered item 3</li>
+      </ol>
+    </div>
+
+    <!-- Section 2: Form Elements -->
+    <h2>📝 Form Elements</h2>
+    <div class="section">
+      <form id="test-form" onsubmit="handleSubmit(event)">
+        <div class="form-group">
+          <label for="username">Username:</label>
+          <input type="text" id="username" name="username" placeholder="Enter username">
+        </div>
+
+        <div class="form-group">
+          <label for="email">Email:</label>
+          <input type="email" id="email" name="email" placeholder="test@example.com">
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password:</label>
+          <input type="password" id="password" name="password" placeholder="Enter password">
+        </div>
+
+        <div class="form-group">
+          <label for="age">Age:</label>
+          <input type="number" id="age" name="age" min="0" max="120">
+        </div>
+
+        <div class="form-group">
+          <label for="country">Country:</label>
+          <select id="country" name="country">
+            <option value="">Select a country...</option>
+            <option value="us">United States</option>
+            <option value="uk">United Kingdom</option>
+            <option value="ca">Canada</option>
+            <option value="au">Australia</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="bio">Bio:</label>
+          <textarea id="bio" name="bio" rows="4" placeholder="Tell us about yourself..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="terms" name="terms">
+            I agree to the terms and conditions
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="newsletter" name="newsletter">
+            Subscribe to newsletter
+          </label>
+        </div>
+
+        <button type="submit">Submit Form</button>
+        <button type="button" class="secondary" onclick="resetForm()">Reset</button>
+      </form>
+    </div>
+
+    <!-- Section 3: Interactive Buttons -->
+    <h2>🎮 Interactive Elements</h2>
+    <div class="section">
+      <h3>Buttons</h3>
+      <button id="click-me" onclick="logClick('click-me')">Click Me!</button>
+      <button id="hover-test" onmouseenter="logHover()" class="secondary">Hover Test</button>
+      <button id="double-click" ondblclick="logDoubleClick()">Double Click</button>
+
+      <h3>Hidden Element</h3>
+      <button onclick="toggleHidden()">Toggle Hidden Element</button>
+      <div id="hidden-element" class="hidden" style="margin-top: 16px; padding: 16px; background: #fef3c7; border-radius: 6px;">
+        <p>This element was hidden! Test <code>wait_for_element</code> to detect when it appears.</p>
+      </div>
+
+      <h3>Dynamic Content</h3>
+      <button onclick="addListItem()">Add List Item</button>
+      <button onclick="removeListItem()" class="secondary">Remove List Item</button>
+      <ul id="dynamic-list">
+        <li>Dynamic item 1</li>
+        <li>Dynamic item 2</li>
+      </ul>
+    </div>
+
+    <!-- Section 4: Links -->
+    <h2>🔗 Links</h2>
+    <div class="section">
+      <p>Test <code>extract_links</code> to find these:</p>
+      <a href="https://example.com">Example Link</a> |
+      <a href="https://github.com">GitHub</a> |
+      <a href="#test">Internal Link</a> |
+      <a href="mailto:test@example.com">Email Link</a>
+
+      <p style="margin-top: 16px;">
+        <a href="https://hidden.example.com" class="hidden">Hidden Link</a>
+      </p>
+    </div>
+
+    <!-- Section 5: Table -->
+    <h2>📊 Table</h2>
+    <div class="section">
+      <table id="test-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>Alice</td>
+            <td><span class="badge success">Active</span></td>
+            <td>95</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>Bob</td>
+            <td><span class="badge warning">Pending</span></td>
+            <td>87</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>Charlie</td>
+            <td><span class="badge error">Inactive</span></td>
+            <td>72</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Section 6: Metadata -->
+    <h2>📋 Page Metadata</h2>
+    <div class="section">
+      <p>This page has metadata that can be extracted with <code>get_page_metadata</code>:</p>
+      <ul>
+        <li><strong>Title:</strong> <span id="page-title">Chrome MCP Test Target Page</span></li>
+        <li><strong>Description:</strong> A test page for Chrome MCP with various elements to interact with</li>
+        <li><strong>Viewport:</strong> width=device-width, initial-scale=1.0</li>
+      </ul>
+    </div>
+
+    <!-- Section 7: Test Results Log -->
+    <h2>🧪 Test Results</h2>
+    <div class="section">
+      <p>Interactions with this page are logged below:</p>
+      <div id="test-results">
+        <div class="test-log">Console ready. Waiting for interactions...</div>
+      </div>
+      <button onclick="clearLog()">Clear Log</button>
+    </div>
+  </div>
+
+  <script>
+    // Logging function
+    function log(message, type = 'info') {
+      const results = document.getElementById('test-results');
+      const entry = document.createElement('div');
+      entry.className = `test-log ${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      results.appendChild(entry);
+      results.scrollTop = results.scrollHeight;
+    }
+
+    // Event handlers
+    function logClick(id) {
+      log(`Button clicked: ${id}`, 'success');
+    }
+
+    function logHover() {
+      log('Hover event triggered', 'info');
+    }
+
+    function logDoubleClick() {
+      log('Double click detected', 'success');
+    }
+
+    function toggleHidden() {
+      const el = document.getElementById('hidden-element');
+      el.classList.toggle('hidden');
+      log(el.classList.contains('hidden') ? 'Element hidden' : 'Element shown', 'info');
+    }
+
+    function addListItem() {
+      const list = document.getElementById('dynamic-list');
+      const item = document.createElement('li');
+      item.textContent = `Dynamic item ${list.children.length + 1}`;
+      list.appendChild(item);
+      log(`Added list item ${list.children.length}`, 'success');
+    }
+
+    function removeListItem() {
+      const list = document.getElementById('dynamic-list');
+      if (list.children.length > 0) {
+        list.lastElementChild.remove();
+        log(`Removed list item`, 'info');
+      }
+    }
+
+    function handleSubmit(event) {
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      log(`Form submitted with ${formData.entries().length} fields`, 'success');
+
+      // Log form values
+      for (const [key, value] of formData.entries()) {
+        if (value) {
+          log(`  ${key}: ${value}`, 'info');
+        }
+      }
+    }
+
+    function resetForm() {
+      document.getElementById('test-form').reset();
+      log('Form reset', 'info');
+    }
+
+    function clearLog() {
+      const results = document.getElementById('test-results');
+      results.innerHTML = '<div class="test-log">Console cleared.</div>';
+    }
+
+    // Page load event
+    window.addEventListener('load', () => {
+      log('Page fully loaded', 'success');
+    });
+
+    // Log navigation errors for tools like execute_javascript
+    window.addEventListener('error', (event) => {
+      log(`Error: ${event.message}`, 'error');
+    });
+  </script>
+</body>
+</html>

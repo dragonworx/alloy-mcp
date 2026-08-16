@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "Chrome MCP",
+  "version": "1.0.0",
+  "description": "Bridge between MCP server and Chrome browser for LLM-driven browser control",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "webRequest",
+    "webNavigation",
+    "cookies",
+    "storage",
+    "downloads",
+    "debugger",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["page-monitor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Chrome MCP"
+  },
+  "icons": {}
+}

@@ -1,0 +1,31 @@
+{
+  "name": "chrome-mcp",
+  "version": "1.0.0",
+  "description": "Chrome MCP - Control Chrome browser via Model Context Protocol",
+  "type": "module",
+  "scripts": {
+    "add-to-claude": "claude mcp add chrome -- bun run \"$(pwd)/server/src/server.ts\"",
+    "remove-from-claude": "claude mcp remove chrome",
+    "setup": "cd server && bun install --frozen-lockfile && cd .. && bun run pair",
+    "dev": "bun --watch run server/src/server.ts",
+    "start": "bun run server/src/server.ts",
+    "pair": "bun run server/src/pair.ts",
+    "build": "cd server && bun run build",
+    "install-server": "cd server && bun install",
+    "typecheck": "cd server && bun run typecheck",
+    "test": "cd server && bun test",
+    "check:extension": "node --check extension/background.js && node --check extension/page-monitor.js && node --check extension/popup.js",
+    "check": "bun run typecheck && bun run test && bun run check:extension",
+    "open-fixture": "open test/test-target.html"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chrome",
+    "browser-automation",
+    "claude",
+    "ai-tools"
+  ],
+  "author": "",
+  "license": "MIT"
+}

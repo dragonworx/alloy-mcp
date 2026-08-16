@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Chrome MCP</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      font-family: "Avenir Next", Avenir, sans-serif;
+      padding: 16px;
+      background: #17201d;
+      color: #edf2ef;
+    }
+    h1 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px 12px;
+      border-radius: 8px;
+      background: #16213e;
+      margin-bottom: 12px;
+    }
+    .dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      transition: all 0.3s ease;
+    }
+    .dot.connected {
+      background: radial-gradient(circle at 30% 30%, #66ff66, #4CAF50, #2d7a2d);
+      box-shadow: 0 0 12px rgba(76, 175, 80, 0.8), inset 0 1px 3px rgba(255, 255, 255, 0.3);
+    }
+    .dot.disconnected {
+      background: radial-gradient(circle at 30% 30%, #ff6666, #F44336, #c62828);
+      box-shadow: 0 0 12px rgba(244, 67, 54, 0.8), inset 0 1px 3px rgba(255, 255, 255, 0.3);
+    }
+    .status-text {
+      margin-left: 10px;
+      font-size: 13px;
+    }
+    .info {
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+    .info span {
+      color: #d9e2dd;
+      font-family: monospace;
+    }
+    .pairing { margin-bottom: 12px; }
+    label { display: block; margin-bottom: 6px; font-size: 12px; color: #c9d4ce; }
+    input {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 8px;
+      border: 1px solid #52645b;
+      border-radius: 4px;
+      background: #0f1513;
+      color: #fff;
+      font-family: monospace;
+    }
+    .error { min-height: 16px; margin-top: 6px; color: #ffb4a9; font-size: 11px; }
+    button {
+      width: 100%;
+      padding: 8px;
+      border: none;
+      border-radius: 6px;
+      background: #0f3460;
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover { background: #1a5276; }
+    button:active { background: #0b2545; }
+  </style>
+</head>
+<body>
+  <h1>Chrome MCP</h1>
+
+  <div class="status" id="statusRow">
+    <div class="dot disconnected" id="statusDot"></div>
+    <div class="status-text" id="statusText">Checking...</div>
+  </div>
+
+  <div class="info" id="info">
+    Server: <span id="serverValue"></span><br>
+    Tools: <span id="toolsValue"></span><br>
+    Reconnect attempts: <span id="attemptsValue"></span>
+  </div>
+
+  <div class="pairing" id="pairing">
+    <label for="pairingToken">Pairing token</label>
+    <input
+      id="pairingToken"
+      type="password"
+      minlength="64"
+      maxlength="64"
+      pattern="[0-9a-fA-F]{64}"
+      autocomplete="off"
+      spellcheck="false"
+      aria-describedby="pairError"
+    />
+    <button id="pairBtn">Pair extension</button>
+    <output class="error" id="pairError"></output>
+  </div>
+
+  <button id="reconnectBtn">Reconnect</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>
