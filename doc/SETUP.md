@@ -44,7 +44,15 @@ Use an absolute `ALLOY_MCP_OUTPUT_DIR` for clients that do not support a working
 
 ## VS Code And GitHub Copilot
 
-Create `.vscode/mcp.json` in the workspace that should use Alloy MCP:
+The fastest path is the guided script, which installs dependencies, provisions the token, resolves absolute paths, and writes the correct `mcp.json`:
+
+```bash
+bun run setup:vscode
+```
+
+Pass `--workspace` or `--global` to skip the prompt, `--print` to preview the configuration without writing it, and `--skip-install` to reuse existing dependencies. See the [VS Code and GitHub Copilot setup guide](VSCODE-COPILOT.md) for the full walkthrough.
+
+To configure VS Code by hand, create `.vscode/mcp.json` in the workspace that should use Alloy MCP:
 
 ```json
 {

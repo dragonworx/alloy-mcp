@@ -75,7 +75,13 @@ For **Claude Code**, run from this repository:
 bun run add-to-claude
 ```
 
-For **VS Code**, create `.vscode/mcp.json`:
+For **VS Code**, one interactive command installs dependencies, provisions the token, and writes the correct `mcp.json`:
+
+```bash
+bun run setup:vscode
+```
+
+It asks whether to configure this workspace or every workspace, resolves the absolute Bun and repository paths, and prints the remaining Chrome extension steps. To configure VS Code by hand instead, create `.vscode/mcp.json`:
 
 ```json
 {

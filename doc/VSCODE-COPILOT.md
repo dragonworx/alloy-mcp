@@ -15,7 +15,41 @@ VS Code starts and owns the Bun server. The extension is loaded once into the Ch
 - VS Code with GitHub Copilot Chat and MCP support enabled
 - A local checkout of this repository
 
-## 1. Install And Create The Pairing Token
+## Guided Setup
+
+From the repository root, run:
+
+```bash
+bun run setup:vscode
+```
+
+This single interactive command performs the steps a person would otherwise do by hand:
+
+1. Installs the exact dependencies from `server/bun.lock`.
+2. Creates or reveals the pairing token and prints it.
+3. Asks whether to register Alloy MCP for this workspace or for every workspace.
+4. Resolves the absolute Bun path and repository paths for you.
+5. Writes or updates the correct `mcp.json`, preserving any other servers already configured.
+6. Prints the remaining manual steps: loading the Chrome extension, pairing, and starting the server.
+
+Running it again is safe; it rewrites only the `alloy` entry. Useful flags:
+
+| Flag | Effect |
+| --- | --- |
+| `--workspace` | Register in `.vscode/mcp.json` without prompting |
+| `--global` | Register in the VS Code user configuration without prompting |
+| `--print` | Show the configuration instead of writing any file |
+| `--skip-install` | Skip the dependency install step |
+
+If a user configuration already contains comments, the script leaves the file untouched and prints the `alloy` entry to paste manually.
+
+The token file defaults to `~/.config/alloy-mcp/token`. Do not place the token in an MCP configuration file or commit it to source control.
+
+Once the script finishes, complete the Chrome steps in [Load And Pair The Chrome Extension](#2-load-and-pair-the-chrome-extension), then [Start Alloy MCP](#4-start-alloy-mcp) and [Verify In Copilot Agent Mode](#5-verify-in-copilot-agent-mode). The numbered sections below document the same steps manually for reference.
+
+## Manual Setup
+
+### 1. Install And Create The Pairing Token
 
 From the repository root, run:
 
@@ -27,7 +61,10 @@ This installs the exact dependencies from `server/bun.lock`, creates a random 25
 
 The token file defaults to `~/.config/alloy-mcp/token`. Do not place the token in an MCP configuration file or commit it to source control.
 
-## 2. Load And Pair The Chrome Extension
+### 2. Load And Pair The Chrome Extension
+```
+chrome://extensions
+```
 
 1. Open `chrome://extensions` in Chrome.
 2. Enable **Developer mode**.
@@ -40,7 +77,7 @@ The extension cannot connect until VS Code starts the MCP server in step 4. A te
 
 For local `file://` pages, open the extension details and enable **Allow access to file URLs**.
 
-## 3. Configure VS Code
+### 3. Configure VS Code
 
 Get the absolute Bun path:
 
@@ -97,7 +134,7 @@ To enable Alloy MCP only in this repository, create `.vscode/mcp.json`:
 
 For another workspace, use the absolute-path global example inside that workspace's `.vscode/mcp.json`.
 
-## 4. Start Alloy MCP
+### 4. Start Alloy MCP
 
 1. Open the Command Palette.
 2. Run **MCP: List Servers**.
@@ -109,7 +146,7 @@ The extension popup should change to connected and its badge should show `ON`. D
 
 Only start Alloy MCP in one VS Code window at a time. This installation controls one Chrome profile through one authenticated extension connection.
 
-## 5. Verify In Copilot Agent Mode
+### 5. Verify In Copilot Agent Mode
 
 Open Copilot Chat, select **Agent** mode, and ask:
 
