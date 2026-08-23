@@ -197,7 +197,13 @@ Prefer the owner-only token file created by `bun run setup`. Environment variabl
 
 ### `ping` works but `health_check` fails
 
-The MCP process is running, but the extension is not authenticated. Confirm the popup token matches `bun run pair`, reload the extension, and restart the MCP server.
+The MCP process is running, but the extension is not authenticated. Open the popup and check what it reports:
+
+- **Pairing required** - confirm the popup token matches `bun run pair`.
+- **Connection stale** - the socket is open but the server stopped answering. The extension reconnects on its own; select **Reconnect** to skip the wait.
+- **Disconnected - retrying** - the server is unreachable. Check that it is running and that nothing else holds port 3001.
+
+Selecting **Reconnect** forces a fresh socket and handshake at any time, including when the popup claims to be connected.
 
 ### `bun` is not found
 

@@ -1,24 +1,186 @@
 // ─── WebSocket Connection Manager ────────────────────────────────────
+// How often the watchdog audits the connection. Also the keepalive cadence.
+const WATCHDOG_INTERVAL_MS = 15_000;
+// The server pings every 5s. Longer silence than this means the socket is dead,
+// whatever readyState claims — a half-open TCP connection never reports itself.
+const STALE_SILENCE_MS = 20_000;
+const MAX_UNANSWERED_KEEPALIVES = 2;
+const HANDSHAKE_TIMEOUT_MS = 10_000;
+const MAX_BACKOFF_MS = 30_000;
+const PROBE_TIMEOUT_MS = 3_000;
+const WATCHDOG_ALARM = "alloy-connection-watchdog";
+
 const CONNECTION = {
   ws: null,
   url: "ws://localhost:3001",
+  state: "starting",
   authenticated: false,
   authContext: null,
   capabilities: [],
   authError: null,
   pairingRequired: false,
   reconnectAttempts: 0,
-  maxReconnectAttempts: 10,
   backoffMultiplier: 2,
   reconnectTimer: null,
   isConnecting: false,
   cleanupReady: false,
   cleanupPromise: null,
+  // Bumped for every socket so a late event from a discarded one cannot
+  // overwrite the state of its replacement.
+  generation: 0,
+  connectStartedAt: 0,
+  lastServerMessageAt: 0,
+  lastConnectedAt: 0,
+  lastDisconnectedAt: 0,
+  lastDisconnectReason: null,
+  unansweredKeepalives: 0,
+  nextRetryAt: 0,
+  probeWaiters: [],
   limits: {
     maxScreenshotDimension: 4096,
     maxScreenshotPayloadBytes: 24 * 1_048_576,
   },
 };
+
+const BADGES = {
+  starting: ["...", "#616161"],
+  connecting: ["...", "#616161"],
+  handshaking: ["...", "#616161"],
+  connected: ["ON", "#2E7D32"],
+  retrying: ["OFF", "#C62828"],
+  disconnected: ["OFF", "#C62828"],
+  pairing_required: ["PAIR", "#B26A00"],
+  error: ["ERR", "#C62828"],
+};
+
+const CLOSE_REASONS = {
+  1000: "Closed normally",
+  1001: "Server shut down",
+  1005: "Closed without a reason",
+  1006: "Connection lost",
+  4000: "Server was busy with another handshake",
+  4001: "Server heartbeat timed out",
+  4002: "Handshake timed out",
+  4003: "Handshake rejected",
+  4004: "Pairing token does not match",
+  4005: "Pairing token required",
+  4006: "Replaced by a newer connection",
+};
+
+function describeCloseEvent(event) {
+  const code = event?.code;
+  return CLOSE_REASONS[code] || `Closed with code ${code ?? "unknown"}`;
+}
+
+function setState(state) {
+  CONNECTION.state = state;
+  const [text, color] = BADGES[state] ?? BADGES.disconnected;
+  updateBadge(text, color);
+}
+
+/**
+ * Whether the bridge is genuinely usable right now. Deliberately stricter than
+ * `authenticated`: a socket can sit in readyState OPEN long after the peer is
+ * gone, which is exactly how the popup used to report a connection the server
+ * no longer had.
+ */
+function isConnectionLive() {
+  return CONNECTION.authenticated
+    && CONNECTION.ws?.readyState === WebSocket.OPEN
+    && Date.now() - CONNECTION.lastServerMessageAt < STALE_SILENCE_MS;
+}
+
+function settleProbes(alive) {
+  if (CONNECTION.probeWaiters.length === 0) return;
+  for (const waiter of CONNECTION.probeWaiters.splice(0)) waiter(alive);
+}
+
+/** Record proof of life. Any frame counts, not just an explicit acknowledgement. */
+function noteServerMessage() {
+  CONNECTION.lastServerMessageAt = Date.now();
+  CONNECTION.unansweredKeepalives = 0;
+  settleProbes(true);
+}
+
+/** Ask the server to answer, and report whether it did within the timeout. */
+function probeServer() {
+  return new Promise((resolve) => {
+    if (!CONNECTION.authenticated || CONNECTION.ws?.readyState !== WebSocket.OPEN) {
+      resolve(false);
+      return;
+    }
+
+    let settled = false;
+    const finish = (alive) => {
+      if (settled) return;
+      settled = true;
+      resolve(alive);
+    };
+    CONNECTION.probeWaiters.push(finish);
+    setTimeout(() => {
+      const index = CONNECTION.probeWaiters.indexOf(finish);
+      if (index !== -1) CONNECTION.probeWaiters.splice(index, 1);
+      finish(false);
+    }, PROBE_TIMEOUT_MS);
+
+    try {
+      send({ type: "keepalive", timestamp: Date.now() });
+    } catch (error) {
+      console.error("[MCP] Probe send failed", error);
+      finish(false);
+    }
+  });
+}
+
+/** Drop the current socket without letting its events touch the next one. */
+function teardownSocket(reason) {
+  const socket = CONNECTION.ws;
+  CONNECTION.generation++;
+  CONNECTION.ws = null;
+  CONNECTION.isConnecting = false;
+  CONNECTION.authenticated = false;
+  CONNECTION.authContext = null;
+  CONNECTION.capabilities = [];
+  CONNECTION.unansweredKeepalives = 0;
+  if (socket) {
+    CONNECTION.lastDisconnectedAt = Date.now();
+    CONNECTION.lastDisconnectReason = reason;
+  }
+  settleProbes(false);
+  if (!socket) return;
+
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onclose = null;
+  socket.onerror = null;
+  try {
+    // Close reasons are capped at 123 bytes; an over-long one throws and would
+    // leave the socket open.
+    socket.close(1000, String(reason).slice(0, 100));
+  } catch (error) {
+    console.warn("[MCP] Could not close socket cleanly", error);
+  }
+}
+
+/**
+ * Tear down and rebuild the connection now. `manual` marks a user-initiated
+ * reconnect, which clears sticky errors and restarts backoff from zero.
+ */
+function forceReconnect(reason, { manual = false } = {}) {
+  console.warn(`[MCP] Forcing reconnect: ${reason}`);
+  teardownSocket(reason);
+  clearTimeout(CONNECTION.reconnectTimer);
+  CONNECTION.reconnectTimer = null;
+  CONNECTION.nextRetryAt = 0;
+  CONNECTION.cleanupReady = false;
+  if (manual) {
+    CONNECTION.reconnectAttempts = 0;
+    CONNECTION.pairingRequired = false;
+    CONNECTION.authError = null;
+  }
+  setState(CONNECTION.pairingRequired ? "pairing_required" : "connecting");
+  return prepareConnection();
+}
 
 const PAIRING_TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
 const MAX_WEBSOCKET_MESSAGE_BYTES = 32 * 1_048_576;
@@ -76,7 +238,7 @@ async function answerAuthChallenge(serverNonce, requestedCapabilities, requested
   if (!pairingToken || !PAIRING_TOKEN_PATTERN.test(pairingToken)) {
     CONNECTION.pairingRequired = true;
     CONNECTION.authError = "Pairing token required";
-    updateBadge("PAIR", "#B26A00");
+    setState("pairing_required");
     CONNECTION.ws?.close(4005, "Pairing token required");
     return;
   }
@@ -151,96 +313,169 @@ function markAuthenticationReady() {
   CONNECTION.authError = null;
   CONNECTION.pairingRequired = false;
   CONNECTION.reconnectAttempts = 0;
-  updateBadge("ON", "#2E7D32");
+  CONNECTION.unansweredKeepalives = 0;
+  CONNECTION.lastConnectedAt = Date.now();
+  CONNECTION.lastServerMessageAt = Date.now();
+  setState("connected");
   console.log("[MCP] Authenticated with server");
 }
 
 function connect() {
   if (!CONNECTION.cleanupReady) return;
-  if (CONNECTION.isConnecting || CONNECTION.ws?.readyState === WebSocket.OPEN) {
+  if (CONNECTION.pairingRequired) {
+    setState("pairing_required");
     return;
   }
+  // Any existing socket blocks a new one, including one still CONNECTING.
+  // Use forceReconnect() to replace a socket on purpose.
+  if (CONNECTION.isConnecting || CONNECTION.ws) return;
 
   CONNECTION.isConnecting = true;
+  CONNECTION.connectStartedAt = Date.now();
+  setState("connecting");
+  const generation = ++CONNECTION.generation;
+  const isCurrent = () => generation === CONNECTION.generation;
 
   try {
-    CONNECTION.ws = new WebSocket(CONNECTION.url);
+    const socket = new WebSocket(CONNECTION.url);
+    CONNECTION.ws = socket;
 
-    CONNECTION.ws.onopen = () => {
+    socket.onopen = () => {
+      if (!isCurrent()) return;
       console.log("[MCP] WebSocket connected; authenticating");
       CONNECTION.isConnecting = false;
       CONNECTION.authenticated = false;
       CONNECTION.authContext = null;
-      updateBadge("...", "#616161");
+      CONNECTION.lastServerMessageAt = Date.now();
+      setState("handshaking");
     };
 
-    CONNECTION.ws.onmessage = async (event) => {
+    socket.onmessage = async (event) => {
+      if (!isCurrent()) return;
+      noteServerMessage();
       try {
         await handleMessage(JSON.parse(event.data));
       } catch (error) {
         CONNECTION.authError = error.message;
         console.error("[MCP] Protocol error", error);
-        CONNECTION.ws?.close(4004, "Authentication failed");
+        socket.close(4004, "Authentication failed");
       }
     };
 
-    CONNECTION.ws.onclose = async (event) => {
-      console.log("[MCP] Disconnected");
+    socket.onclose = async (event) => {
+      if (!isCurrent()) return;
       CONNECTION.ws = null;
       CONNECTION.isConnecting = false;
       CONNECTION.authenticated = false;
       CONNECTION.authContext = null;
       CONNECTION.capabilities = [];
       CONNECTION.cleanupReady = false;
+      CONNECTION.unansweredKeepalives = 0;
+      CONNECTION.lastDisconnectedAt = Date.now();
+      CONNECTION.lastDisconnectReason = describeCloseEvent(event);
+      settleProbes(false);
       clearTimeout(CONNECTION.reconnectTimer);
       CONNECTION.reconnectTimer = null;
-      if (event.code === 4004) {
+      if (event?.code === 4004) {
         CONNECTION.pairingRequired = true;
         CONNECTION.authError = "Pairing token does not match";
       }
-      updateBadge(CONNECTION.pairingRequired ? "PAIR" : "OFF", CONNECTION.pairingRequired ? "#B26A00" : "#C62828");
+      setState(CONNECTION.pairingRequired ? "pairing_required" : "retrying");
+      console.log(`[MCP] Disconnected: ${CONNECTION.lastDisconnectReason}`);
       try {
         await ensureCleanSession();
-        scheduleReconnect();
       } catch (error) {
+        // Losing the browser session cleanup must not strand us offline.
+        // Report it, then retry anyway — the next attempt cleans up again.
         CONNECTION.authError = `Session cleanup failed: ${error.message}`;
-        updateBadge("ERR", "#C62828");
         console.error("[MCP] Session cleanup failed", error);
       }
+      if (isCurrent()) scheduleReconnect();
     };
 
-    CONNECTION.ws.onerror = (err) => {
+    socket.onerror = (err) => {
+      if (!isCurrent()) return;
       console.error("[MCP] WebSocket error", err);
       CONNECTION.isConnecting = false;
     };
   } catch (error) {
     CONNECTION.authError = error instanceof Error ? error.message : String(error);
     console.error("[MCP] Could not create WebSocket", error);
+    CONNECTION.ws = null;
     CONNECTION.isConnecting = false;
     scheduleReconnect();
   }
 }
 
 function scheduleReconnect() {
-  if (!CONNECTION.cleanupReady) return;
-  if (CONNECTION.pairingRequired) return;
-  if (CONNECTION.reconnectAttempts >= CONNECTION.maxReconnectAttempts) {
-    console.log("[MCP] Max reconnect attempts reached");
+  if (CONNECTION.pairingRequired) {
+    setState("pairing_required");
+    return;
+  }
+  if (CONNECTION.reconnectTimer) return;
+
+  // Retry forever with capped backoff. Giving up after N attempts left the
+  // extension permanently offline whenever the server outlived the budget.
+  const base = Math.min(
+    1000 * Math.pow(CONNECTION.backoffMultiplier, CONNECTION.reconnectAttempts),
+    MAX_BACKOFF_MS
+  );
+  const delay = Math.round(base * (0.7 + Math.random() * 0.6));
+  CONNECTION.reconnectAttempts++;
+  CONNECTION.nextRetryAt = Date.now() + delay;
+  setState("retrying");
+  console.log(`[MCP] Reconnecting in ${delay}ms (attempt ${CONNECTION.reconnectAttempts})`);
+
+  CONNECTION.reconnectTimer = setTimeout(() => {
+    CONNECTION.reconnectTimer = null;
+    CONNECTION.nextRetryAt = 0;
+    if (CONNECTION.cleanupReady) connect();
+    else void prepareConnection();
+  }, delay);
+}
+
+/**
+ * Audits the connection and repairs it. Driven by both a timer and an alarm:
+ * the timer is finer-grained, the alarm survives service-worker termination.
+ */
+function runWatchdog() {
+  if (CONNECTION.pairingRequired) {
+    setState("pairing_required");
     return;
   }
 
-  const delay = Math.min(
-    1000 * Math.pow(CONNECTION.backoffMultiplier, CONNECTION.reconnectAttempts),
-    30000
-  );
-  CONNECTION.reconnectAttempts++;
-  console.log(`[MCP] Reconnecting in ${delay}ms (attempt ${CONNECTION.reconnectAttempts})`);
+  if (CONNECTION.authenticated && CONNECTION.ws?.readyState === WebSocket.OPEN) {
+    const silenceMs = Date.now() - CONNECTION.lastServerMessageAt;
+    if (silenceMs > STALE_SILENCE_MS) {
+      void forceReconnect(`No server traffic for ${Math.round(silenceMs / 1000)}s`);
+      return;
+    }
+    if (CONNECTION.unansweredKeepalives >= MAX_UNANSWERED_KEEPALIVES) {
+      void forceReconnect("Server stopped acknowledging keepalives");
+      return;
+    }
+    CONNECTION.unansweredKeepalives++;
+    try {
+      send({ type: "keepalive", timestamp: Date.now() });
+    } catch (error) {
+      void forceReconnect(`Keepalive send failed: ${error.message}`);
+    }
+    return;
+  }
 
-  clearTimeout(CONNECTION.reconnectTimer);
-  CONNECTION.reconnectTimer = setTimeout(() => {
-    CONNECTION.reconnectTimer = null;
-    connect();
-  }, delay);
+  // Socket exists but never finished authenticating — a stalled handshake looks
+  // identical to a live connection from readyState alone.
+  if (CONNECTION.ws && Date.now() - CONNECTION.connectStartedAt > HANDSHAKE_TIMEOUT_MS) {
+    void forceReconnect("Handshake did not complete");
+    return;
+  }
+
+  // Nothing connected and nothing scheduled: typically a worker that was killed
+  // and has just been woken by the alarm.
+  if (!CONNECTION.ws && !CONNECTION.isConnecting && !CONNECTION.reconnectTimer) {
+    if (CONNECTION.cleanupReady) connect();
+    else void prepareConnection();
+  }
 }
 
 function send(data) {
@@ -354,6 +589,10 @@ async function handleMessage(msg) {
     markAuthenticationReady();
     return;
   }
+
+  // Liveness traffic. noteServerMessage() has already recorded it; these
+  // branches exist so it is never mistaken for a malformed tool request.
+  if (msg.type === "keepalive_ack") return;
 
   if (!CONNECTION.authenticated) return;
 
@@ -2682,17 +2921,12 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 // ─── Popup communication ────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "getStatus") {
-    chrome.storage.local.get("pairingToken").then((stored) => {
-      sendResponse({
-        connected: CONNECTION.authenticated,
-        socketConnected: CONNECTION.ws?.readyState === WebSocket.OPEN,
-        paired: PAIRING_TOKEN_PATTERN.test(stored.pairingToken || ""),
-        authError: CONNECTION.authError,
-        url: CONNECTION.url,
-        reconnectAttempts: CONNECTION.reconnectAttempts,
-        toolCount: CONNECTION.capabilities.length,
-      });
-    });
+    void buildStatus().then(sendResponse);
+    return true;
+  }
+
+  if (message.action === "verifyConnection") {
+    void verifyConnection().then(sendResponse);
     return true;
   }
 
@@ -2704,32 +2938,68 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     chrome.storage.local.set({ pairingToken }).then(() => {
-      CONNECTION.pairingRequired = false;
-      CONNECTION.authError = null;
-      CONNECTION.reconnectAttempts = 0;
-      if (CONNECTION.ws) {
-        CONNECTION.ws.close(1000, "Pairing token updated");
-      } else {
-        void prepareConnection();
-      }
+      void forceReconnect("Pairing token updated", { manual: true });
       sendResponse({ success: true });
     });
     return true;
   }
 
   if (message.action === "reconnect") {
-    CONNECTION.pairingRequired = false;
-    CONNECTION.authError = null;
-    CONNECTION.reconnectAttempts = 0;
-    if (CONNECTION.ws) {
-      CONNECTION.ws.close(1000, "Manual reconnect");
-    } else {
-      void prepareConnection();
-    }
+    void forceReconnect("Manual reconnect", { manual: true });
     sendResponse({ success: true });
     return true;
   }
 });
+
+// ─── Status reporting ───────────────────────────────────────────────
+async function buildStatus() {
+  const stored = await chrome.storage.local.get("pairingToken");
+  const socketOpen = CONNECTION.ws?.readyState === WebSocket.OPEN;
+  const silenceMs = CONNECTION.lastServerMessageAt
+    ? Date.now() - CONNECTION.lastServerMessageAt
+    : null;
+  const stale = CONNECTION.authenticated && socketOpen && !isConnectionLive();
+  return {
+    // `connected` means the bridge is usable, not merely that a socket object
+    // exists. A stale connection reports false even while readyState is OPEN.
+    connected: isConnectionLive(),
+    state: stale ? "stale" : CONNECTION.state,
+    socketOpen,
+    authenticated: CONNECTION.authenticated,
+    paired: PAIRING_TOKEN_PATTERN.test(stored.pairingToken || ""),
+    pairingRequired: CONNECTION.pairingRequired,
+    authError: CONNECTION.authError,
+    url: CONNECTION.url,
+    reconnectAttempts: CONNECTION.reconnectAttempts,
+    toolCount: CONNECTION.capabilities.length,
+    lastConnectedAt: CONNECTION.lastConnectedAt || null,
+    lastDisconnectedAt: CONNECTION.lastDisconnectedAt || null,
+    lastDisconnectReason: CONNECTION.lastDisconnectReason,
+    millisecondsSinceServerMessage: silenceMs,
+    retryInMs: CONNECTION.nextRetryAt ? Math.max(0, CONNECTION.nextRetryAt - Date.now()) : null,
+  };
+}
+
+/**
+ * Confirm the server is really there with a live round trip, and repair the
+ * connection if it is not. This is what makes the popup's badge trustworthy
+ * rather than a restatement of our own local flags.
+ */
+async function verifyConnection() {
+  if (!CONNECTION.authenticated) {
+    // Nothing to verify — nudge the watchdog so an idle worker reconnects now
+    // instead of waiting out the backoff.
+    runWatchdog();
+    return { ...(await buildStatus()), verified: false, probed: false };
+  }
+
+  const alive = await probeServer();
+  if (!alive) {
+    await forceReconnect("Server did not answer a status probe");
+    return { ...(await buildStatus()), verified: false, probed: true };
+  }
+  return { ...(await buildStatus()), verified: true, probed: true };
+}
 
 // ─── Start connection ───────────────────────────────────────────────
 async function startConnection() {
@@ -2738,19 +3008,26 @@ async function startConnection() {
 
 startConnection(); // NOSONAR: top-level await can stall MV3 worker cold starts.
 
-// ─── Service Worker Keepalive ───────────────────────────────────────
-// Chrome MV3 service workers are terminated after ~30s of inactivity.
-// This keepalive prevents that from killing the WebSocket connection.
-const KEEPALIVE_INTERVAL = 25_000; // 25 seconds (under the 30s threshold)
-setInterval(() => {
-  if (CONNECTION.authenticated && CONNECTION.ws?.readyState === WebSocket.OPEN) {
-    send({ type: "keepalive", timestamp: Date.now() });
-    return;
-  }
-  // If disconnected, try to reconnect (service worker just woke up)
-  if (!CONNECTION.pairingRequired && !CONNECTION.ws && !CONNECTION.isConnecting) {
-    CONNECTION.reconnectAttempts = 0;
-    if (CONNECTION.cleanupReady) connect();
-    else void prepareConnection();
-  }
-}, KEEPALIVE_INTERVAL);
+// ─── Connection watchdog ────────────────────────────────────────────
+// Two independent drivers, because neither is sufficient alone:
+//
+//  * setInterval gives a tight audit loop, but dies with the service worker and
+//    never comes back on its own.
+//  * chrome.alarms outlives the worker and wakes it back up, which is what
+//    recovers the connection after Chrome idles us out. Its minimum period is
+//    coarse, so it is a floor on recovery time rather than the main loop.
+//
+// Before this, the only thing that revived a killed worker was opening the
+// popup — so the popup always found a healthy connection while agents did not.
+setInterval(runWatchdog, WATCHDOG_INTERVAL_MS);
+
+chrome.alarms?.create(WATCHDOG_ALARM, { periodInMinutes: 0.5 });
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm.name === WATCHDOG_ALARM) runWatchdog();
+});
+
+chrome.runtime.onStartup?.addListener(() => void prepareConnection());
+chrome.runtime.onInstalled?.addListener(() => {
+  chrome.alarms?.create(WATCHDOG_ALARM, { periodInMinutes: 0.5 });
+  void prepareConnection();
+});

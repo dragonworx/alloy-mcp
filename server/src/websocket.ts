@@ -106,8 +106,13 @@ export class WebSocketBridge {
   private readonly pendingRequests = new Map<string, PendingRequest>();
   private extensionInfo: HandshakeMessage | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-  private lastPongTime: number = 0;
+  private lastActivityTime: number = 0;
   private missedPongs: number = 0;
+  private connectedSince: number = 0;
+  /** Ping cadence. Short so a dead peer is noticed in seconds, not minutes. */
+  private readonly heartbeatIntervalMs = 5_000;
+  /** Silence that counts as a missed beat. Generous enough to ride out a busy tool call. */
+  private readonly silenceThresholdMs = 15_000;
   private readonly maxMissedPongs = 3;
   private server: ReturnType<typeof Bun.serve> | null = null;
   private serverToolNames: string[] = [];
@@ -136,6 +141,15 @@ export class WebSocketBridge {
 
   get listeningPort(): number | null {
     return this.server?.port ?? null;
+  }
+
+  /** Milliseconds since the extension last sent anything, or null when disconnected. */
+  get millisecondsSinceLastActivity(): number | null {
+    return this.connection ? Date.now() - this.lastActivityTime : null;
+  }
+
+  get connectedSinceTimestamp(): number | null {
+    return this.connection ? this.connectedSince : null;
   }
 
   start(): void {
@@ -184,10 +198,7 @@ export class WebSocketBridge {
       try {
         this.pendingConnection.close(1001, "Server shutting down");
       } catch (_) { /* ignore close errors */ }
-      this.pendingConnection = null;
-      this.pendingServerNonce = null;
-      this.pendingConfirmationNonce = null;
-      this.pendingHandshake = null;
+      this.clearPendingState();
     }
     this.server?.stop();
     logger.info("WebSocket server stopped");
@@ -222,10 +233,23 @@ export class WebSocketBridge {
     });
   }
 
+  private clearPendingState(): void {
+    this.pendingConnection = null;
+    this.pendingServerNonce = null;
+    this.pendingConfirmationNonce = null;
+    this.pendingHandshake = null;
+  }
+
   private handleOpen(ws: ServerWebSocket<unknown>): void {
-    if (this.connection || this.pendingConnection) {
-      logger.warn("Rejecting additional connection (max 1) \u2014 existing connection is active");
-      ws.close(4000, "Only one connection allowed");
+    // An in-progress handshake still gets exclusive use of the slot, bounded by
+    // the handshake timer, so an unauthenticated peer cannot displace one.
+    // An already-authenticated connection does NOT block a new attempt: it may
+    // be a socket the OS never told us died, and refusing the replacement used
+    // to strand the extension until the heartbeat finally expired. Taking over
+    // still requires completing the full handshake, below.
+    if (this.pendingConnection) {
+      logger.warn("Rejecting a connection while another handshake is in progress");
+      ws.close(4000, "Handshake already in progress");
       return;
     }
 
@@ -251,10 +275,7 @@ export class WebSocketBridge {
     this.clearHandshakeTimer();
     this.handshakeTimer = setTimeout(() => {
       if (this.pendingConnection === ws) {
-        this.pendingConnection = null;
-        this.pendingServerNonce = null;
-        this.pendingConfirmationNonce = null;
-        this.pendingHandshake = null;
+        this.clearPendingState();
         ws.close(4002, "Extension handshake timed out");
       }
     }, 5_000);
@@ -271,10 +292,19 @@ export class WebSocketBridge {
 
       if (ws !== this.connection) return;
 
+      // Any frame proves the peer is alive, not just an explicit pong.
+      this.lastActivityTime = Date.now();
+      this.missedPongs = 0;
+
       if (data.type === "pong") {
-        this.lastPongTime = Date.now();
-        this.missedPongs = 0;
         logger.debug("Heartbeat pong received");
+        return;
+      }
+
+      // The extension probes us with keepalives; acknowledging them lets it
+      // detect a half-open socket from its side too.
+      if (data.type === "keepalive") {
+        this.send({ type: "keepalive_ack", timestamp: Date.now() });
         return;
       }
 
@@ -318,20 +348,14 @@ export class WebSocketBridge {
   }
 
   private rejectPendingHandshake(ws: ServerWebSocket<unknown>, code: number, reason: string): void {
-    this.pendingConnection = null;
-    this.pendingServerNonce = null;
-    this.pendingConfirmationNonce = null;
-    this.pendingHandshake = null;
+    this.clearPendingState();
     this.clearHandshakeTimer();
     ws.close(code, reason);
   }
 
   private handleClose(ws: ServerWebSocket<unknown>): void {
     if (ws === this.pendingConnection) {
-      this.pendingConnection = null;
-      this.pendingServerNonce = null;
-      this.pendingConfirmationNonce = null;
-      this.pendingHandshake = null;
+      this.clearPendingState();
       this.clearHandshakeTimer();
       logger.warn("WebSocket disconnected before extension handshake");
       return;
@@ -392,24 +416,33 @@ export class WebSocketBridge {
       || typeof confirmation.proof !== "string"
       || !verifyPairingProof(confirmation.proof, expectedProof)
     ) {
-      this.pendingConnection = null;
-      this.pendingServerNonce = null;
-      this.pendingConfirmationNonce = null;
-      this.pendingHandshake = null;
+      this.clearPendingState();
       this.clearHandshakeTimer();
       ws.close(4004, "Extension authentication confirmation failed");
       return;
     }
 
     const msg = this.pendingHandshake;
+    const superseded = this.connection;
     this.clearHandshakeTimer();
-    this.pendingConnection = null;
-    this.pendingServerNonce = null;
-    this.pendingConfirmationNonce = null;
-    this.pendingHandshake = null;
+    this.clearPendingState();
+
+    // A freshly authenticated extension replaces whatever we were holding. The
+    // old socket is usually a zombie the OS never told us about, and refusing
+    // the new one would strand the extension until the heartbeat expired.
+    if (superseded && superseded !== ws) {
+      logger.warn("Replacing the previous extension connection with a newly authenticated one");
+      this.stopHeartbeat();
+      this.rejectAllPending("connection_lost", "Extension reconnected; in-flight request abandoned");
+      try {
+        superseded.close(4006, "Superseded by a newer extension connection");
+      } catch (_) { /* ignore close errors */ }
+    }
+
     this.connection = ws;
     this.extensionInfo = msg;
-    this.lastPongTime = Date.now();
+    this.lastActivityTime = Date.now();
+    this.connectedSince = Date.now();
     this.missedPongs = 0;
     logger.info("Extension handshake complete", {
       version: msg.version,
@@ -454,26 +487,34 @@ export class WebSocketBridge {
   }
 
   private startHeartbeat(): void {
-    this.lastPongTime = Date.now();
+    this.stopHeartbeat();
+    this.lastActivityTime = Date.now();
     this.missedPongs = 0;
     this.heartbeatInterval = setInterval(() => {
-      // Check if previous pong was received
-      const timeSinceLastPong = Date.now() - this.lastPongTime;
-      if (timeSinceLastPong > 35_000) {
+      const silenceMs = Date.now() - this.lastActivityTime;
+      if (silenceMs > this.silenceThresholdMs) {
         this.missedPongs++;
-        logger.warn(`Heartbeat: no pong received (missed ${this.missedPongs}/${this.maxMissedPongs}, last pong ${Math.round(timeSinceLastPong / 1000)}s ago)`);
+        logger.warn(`Heartbeat: extension silent for ${Math.round(silenceMs / 1000)}s (missed ${this.missedPongs}/${this.maxMissedPongs})`);
         if (this.missedPongs >= this.maxMissedPongs) {
-          logger.error("Heartbeat failure: extension unresponsive, closing connection");
-          if (this.connection) {
+          logger.error("Heartbeat failure: extension unresponsive, dropping connection");
+          const dead = this.connection;
+          // Drop our own reference immediately. A half-open socket can swallow
+          // close() without ever firing onclose, and until we let go of it the
+          // extension's reconnect has nothing to take over from.
+          this.connection = null;
+          this.extensionInfo = null;
+          this.stopHeartbeat();
+          this.rejectAllPending("connection_lost", "Chrome extension stopped responding");
+          if (dead) {
             try {
-              this.connection.close(4001, "Heartbeat timeout");
-            } catch (_) { /* ignore */ }
+              dead.close(4001, "Heartbeat timeout");
+            } catch (_) { /* ignore close errors */ }
           }
           return;
         }
       }
       this.send({ type: "ping", timestamp: Date.now() });
-    }, 30_000);
+    }, this.heartbeatIntervalMs);
   }
 
   private stopHeartbeat(): void {

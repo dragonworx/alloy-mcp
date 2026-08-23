@@ -38,6 +38,7 @@ function createHarness(options: HarnessOptions = {}) {
   let dynamicCleanupCalls = 0;
   let attachCalls = 0;
   let webSocketCalls = 0;
+  const webSockets: any[] = [];
   let bitmapIndex = 0;
   let remainingCaptureTimeouts = options.immediateCaptureTimeouts ?? 0;
   const drawCalls: any[][] = [];
@@ -115,17 +116,25 @@ function createHarness(options: HarnessOptions = {}) {
   class FakeWebSocket {
     static readonly OPEN = 1;
     readyState = 0;
-    onopen?: () => void;
-    onmessage?: (event: { data: string }) => void;
-    onclose?: (event: { code: number }) => void;
-    onerror?: (error: Error) => void;
+    onopen?: (() => void) | null;
+    onmessage?: ((event: { data: string }) => void) | null;
+    onclose?: ((event: { code: number }) => void) | null;
+    onerror?: ((error: Error) => void) | null;
+    readonly closeCalls: Array<{ code?: number; reason?: string }> = [];
+    readonly sent: string[] = [];
 
     constructor() {
       webSocketCalls++;
+      webSockets.push(this);
     }
 
-    close() {}
-    send() {}
+    close(code?: number, reason?: string) {
+      this.closeCalls.push({ code, reason });
+    }
+
+    send(data: string) {
+      this.sent.push(data);
+    }
   }
 
   const chrome = {
@@ -221,9 +230,15 @@ function createHarness(options: HarnessOptions = {}) {
       onHistoryStateUpdated: { addListener() {}, removeListener() {} },
       onReferenceFragmentUpdated: { addListener() {}, removeListener() {} },
     },
+    alarms: {
+      create() {},
+      onAlarm: { addListener() {} },
+    },
     runtime: {
       getManifest: () => ({ version: "1.0.0-test" }),
       onMessage: { addListener() {} },
+      onStartup: { addListener() {} },
+      onInstalled: { addListener() {} },
     },
     cookies: {},
     downloads: {},
@@ -273,7 +288,7 @@ function createHarness(options: HarnessOptions = {}) {
   });
 
   const backgroundPath = resolve(import.meta.dir, "../../extension/background.js");
-  const source = `${readFileSync(backgroundPath, "utf8")}\n;globalThis.__backgroundTest = {\n    CONNECTION, ensureCleanSession, cleanupMcpSession, networkLogs, consoleLogs,\n    activeToolRequests, dialogOverrideTabs, acquireDebugger, releaseDebugger, debuggerSessions,\n    handleToolRequest, send, toolHandlers\n  };`;
+  const source = `${readFileSync(backgroundPath, "utf8")}\n;globalThis.__backgroundTest = {\n    CONNECTION, ensureCleanSession, cleanupMcpSession, networkLogs, consoleLogs,\n    activeToolRequests, dialogOverrideTabs, acquireDebugger, releaseDebugger, debuggerSessions,\n    handleToolRequest, send, toolHandlers,\n    runWatchdog, scheduleReconnect, forceReconnect, buildStatus, isConnectionLive\n  };`;
   new vm.Script(source, { filename: backgroundPath }).runInContext(context);
 
   return {
@@ -287,6 +302,7 @@ function createHarness(options: HarnessOptions = {}) {
     tabUpdates,
     timeoutDelays,
     visibleTabCaptures,
+    webSockets,
     emitDetach(tabId: number) {
       for (const listener of detachListeners) listener({ tabId });
     },
@@ -299,6 +315,28 @@ function createHarness(options: HarnessOptions = {}) {
     get dynamicCleanupCalls() { return dynamicCleanupCalls; },
     get webSocketCalls() { return webSocketCalls; },
   };
+}
+
+async function settle(): Promise<void> {
+  for (let index = 0; index < 12; index++) await flushTasks();
+}
+
+/** Boot a harness and drive its socket up to an authenticated, live connection. */
+async function createConnectedHarness() {
+  const harness = createHarness();
+  await settle();
+
+  const socket = harness.webSockets[0];
+  if (!socket) throw new Error("No WebSocket was created");
+  socket.readyState = 1;
+  socket.onopen();
+
+  const { CONNECTION } = harness.api;
+  CONNECTION.authenticated = true;
+  CONNECTION.capabilities = ["list_tabs"];
+  CONNECTION.lastServerMessageAt = Date.now();
+  CONNECTION.unansweredKeepalives = 0;
+  return harness;
 }
 
 describe("extension lifecycle", () => {
@@ -717,5 +755,113 @@ describe("extension lifecycle", () => {
     })).rejects.toThrow("more than 64 viewport tiles");
     expect(harness.visibleTabCaptures).toHaveLength(64);
     expect(harness.scrollCalls.at(-1)).toEqual({ left: 0, top: 25 });
+  });
+  test("a silent socket is reported stale rather than connected", async () => {
+    const harness = await createConnectedHarness();
+    const { CONNECTION } = harness.api;
+    CONNECTION.lastServerMessageAt = Date.now() - 60_000;
+
+    expect(harness.api.isConnectionLive()).toBe(false);
+
+    const status = await harness.api.buildStatus();
+    // readyState still says OPEN. Reporting that as "connected" is exactly how
+    // the popup used to disagree with the server.
+    expect(status.socketOpen).toBe(true);
+    expect(status.connected).toBe(false);
+    expect(status.state).toBe("stale");
+  });
+
+  test("the watchdog keeps a healthy connection and probes it", async () => {
+    const harness = await createConnectedHarness();
+    const { CONNECTION } = harness.api;
+    const socket = harness.webSockets[0];
+
+    harness.api.runWatchdog();
+
+    expect(JSON.parse(socket.sent.at(-1)).type).toBe("keepalive");
+    expect(CONNECTION.unansweredKeepalives).toBe(1);
+    expect(harness.webSockets).toHaveLength(1);
+  });
+
+  test("the watchdog replaces a socket the server has gone silent on", async () => {
+    const harness = await createConnectedHarness();
+    const { CONNECTION } = harness.api;
+    const socket = harness.webSockets[0];
+    CONNECTION.lastServerMessageAt = Date.now() - 60_000;
+
+    harness.api.runWatchdog();
+    await settle();
+
+    expect(socket.closeCalls.length).toBeGreaterThan(0);
+    expect(harness.webSockets).toHaveLength(2);
+    expect(CONNECTION.lastDisconnectReason).toContain("No server traffic");
+  });
+
+  test("an unanswered keepalive run forces a reconnect", async () => {
+    const harness = await createConnectedHarness();
+    const { CONNECTION } = harness.api;
+
+    // Nothing acknowledges, so lastServerMessageAt stays put while the count climbs.
+    harness.api.runWatchdog();
+    harness.api.runWatchdog();
+    expect(harness.webSockets).toHaveLength(1);
+
+    harness.api.runWatchdog();
+    await settle();
+
+    expect(harness.webSockets).toHaveLength(2);
+    expect(CONNECTION.lastDisconnectReason).toContain("keepalive");
+  });
+
+  test("reconnect backoff is capped but never gives up", async () => {
+    const harness = await createConnectedHarness();
+    const { CONNECTION } = harness.api;
+    CONNECTION.reconnectAttempts = 500;
+    CONNECTION.reconnectTimer = null;
+
+    harness.api.scheduleReconnect();
+
+    expect(CONNECTION.reconnectTimer).toBeTruthy();
+    expect(CONNECTION.reconnectAttempts).toBe(501);
+    expect(CONNECTION.nextRetryAt - Date.now()).toBeLessThanOrEqual(40_000);
+    clearTimeout(CONNECTION.reconnectTimer);
+  });
+
+  test("a manual reconnect clears a sticky pairing error and restarts backoff", async () => {
+    const harness = await createConnectedHarness();
+    const { CONNECTION } = harness.api;
+    const socket = harness.webSockets[0];
+    CONNECTION.pairingRequired = true;
+    CONNECTION.authError = "Pairing token does not match";
+    CONNECTION.reconnectAttempts = 7;
+
+    await harness.api.forceReconnect("Manual reconnect", { manual: true });
+    await settle();
+
+    expect(CONNECTION.pairingRequired).toBe(false);
+    expect(CONNECTION.authError).toBeNull();
+    expect(CONNECTION.reconnectAttempts).toBe(0);
+    expect(socket.closeCalls.length).toBeGreaterThan(0);
+    expect(harness.webSockets).toHaveLength(2);
+  });
+
+  test("a late event from a replaced socket cannot disturb its successor", async () => {
+    const harness = await createConnectedHarness();
+    const { CONNECTION } = harness.api;
+    const stale = harness.webSockets[0];
+    const staleOnClose = stale.onclose;
+
+    await harness.api.forceReconnect("Replaced on purpose");
+    await settle();
+
+    const fresh = harness.webSockets[1];
+    expect(CONNECTION.ws).toBe(fresh);
+
+    // The discarded socket's close finally lands. It must not tear down the
+    // connection that replaced it.
+    staleOnClose({ code: 1006 });
+    await settle();
+
+    expect(CONNECTION.ws).toBe(fresh);
   });
 });

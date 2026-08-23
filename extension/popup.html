@@ -24,11 +24,10 @@
     .status {
       display: flex;
       align-items: center;
-      justify-content: center;
-      padding: 16px 12px;
+      padding: 14px 12px;
       border-radius: 8px;
       background: #16213e;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
     .dot {
       width: 24px;
@@ -46,9 +45,28 @@
       background: radial-gradient(circle at 30% 30%, #ff6666, #F44336, #c62828);
       box-shadow: 0 0 12px rgba(244, 67, 54, 0.8), inset 0 1px 3px rgba(255, 255, 255, 0.3);
     }
-    .status-text {
+    .dot.pending {
+      background: radial-gradient(circle at 30% 30%, #9fb3c8, #7f8c8d, #4d5656);
+      box-shadow: 0 0 10px rgba(127, 140, 141, 0.7), inset 0 1px 3px rgba(255, 255, 255, 0.3);
+    }
+    /* Socket open, server silent: not healthy, but not a clean disconnect either. */
+    .dot.stale {
+      background: radial-gradient(circle at 30% 30%, #ffd479, #FFA000, #b26a00);
+      box-shadow: 0 0 12px rgba(255, 160, 0, 0.8), inset 0 1px 3px rgba(255, 255, 255, 0.3);
+    }
+    .status-body {
       margin-left: 10px;
+      min-width: 0;
+    }
+    .status-text {
       font-size: 13px;
+    }
+    .status-detail {
+      margin-top: 4px;
+      font-size: 11px;
+      line-height: 1.4;
+      color: #a8b5ae;
+      word-break: break-word;
     }
     .info {
       font-size: 12px;
@@ -86,20 +104,25 @@
     }
     button:hover { background: #1a5276; }
     button:active { background: #0b2545; }
+    button:disabled { background: #2a3b47; color: #8c9a93; cursor: default; }
   </style>
 </head>
 <body>
   <h1>Alloy MCP</h1>
 
   <div class="status" id="statusRow">
-    <div class="dot disconnected" id="statusDot"></div>
-    <div class="status-text" id="statusText">Checking...</div>
+    <div class="dot pending" id="statusDot"></div>
+    <div class="status-body">
+      <div class="status-text" id="statusText">Checking...</div>
+      <div class="status-detail" id="statusDetail"></div>
+    </div>
   </div>
 
   <div class="info" id="info">
     Server: <span id="serverValue"></span><br>
     Tools: <span id="toolsValue"></span><br>
-    Reconnect attempts: <span id="attemptsValue"></span>
+    Reconnect attempts: <span id="attemptsValue"></span><br>
+    Last event: <span id="lastEventValue"></span>
   </div>
 
   <div class="pairing" id="pairing">

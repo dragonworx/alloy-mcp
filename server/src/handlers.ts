@@ -55,6 +55,12 @@ function coerceParameterTypes(args: Record<string, unknown>, schema: z.ZodTypeAn
   return coerced;
 }
 
+/** How long the extension has been quiet, for diagnosing a wedged bridge. */
+function secondsSinceExtensionMessage(bridge: WebSocketBridge): number | null {
+  const elapsed = bridge.millisecondsSinceLastActivity;
+  return elapsed === null ? null : Math.round(elapsed / 1000);
+}
+
 function pingResult(bridge: WebSocketBridge): CallToolResult {
   return {
     content: [{
@@ -64,6 +70,7 @@ function pingResult(bridge: WebSocketBridge): CallToolResult {
         server: "online",
         extensionConnected: bridge.isConnected,
         extensionVersion: bridge.extensionVersion,
+        secondsSinceExtensionMessage: secondsSinceExtensionMessage(bridge),
         timestamp: Date.now(),
       }, null, 2),
     }],
@@ -76,6 +83,7 @@ async function healthCheckResult(bridge: WebSocketBridge): Promise<CallToolResul
     extensionConnected: bridge.isConnected,
     extensionVersion: bridge.extensionVersion,
     extensionCapabilities: bridge.extensionCapabilities.length,
+    secondsSinceExtensionMessage: secondsSinceExtensionMessage(bridge),
     timestamp: Date.now(),
   };
 
@@ -219,7 +227,9 @@ export async function handleToolCall(
     logger.warn(`Tool ${toolName} blocked: extension not connected`);
     return errorResponse(
       ErrorCode.EXTENSION_NOT_CONNECTED,
-      "Chrome extension is not connected. Please ensure the extension is installed and the browser is open."
+      "Chrome extension is not connected. Check that Chrome is open with the Alloy MCP extension "
+        + "installed and its badge showing ON. If the extension popup disagrees, open it and select "
+        + "Reconnect to force a fresh connection."
     );
   }
 

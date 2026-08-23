@@ -32,6 +32,8 @@ test("pairing validation survives connection status refreshes", () => {
       "pairBtn",
       "pairError",
       "reconnectBtn",
+      "statusDetail",
+      "lastEventValue",
       "serverValue",
       "toolsValue",
       "attemptsValue",

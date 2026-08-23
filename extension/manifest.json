@@ -13,7 +13,8 @@
     "storage",
     "downloads",
     "debugger",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "alarms"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {

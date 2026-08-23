@@ -77,7 +77,11 @@ Network monitoring provides request URL, method, resource type, response status,
 
 Blocking/header tools create tab-scoped session rules. Use the list, remove, and clear tools to manage them explicitly; all remaining rules are removed when the MCP connection closes or the extension worker starts.
 
-Before every connection attempt, the extension also restores tracked console/dialog page hooks, clears monitoring state, and releases debugger sessions. If cleanup fails, reconnection remains blocked.
+Before every connection attempt, the extension also restores tracked console/dialog page hooks, clears monitoring state, and releases debugger sessions. A cleanup failure is surfaced in the popup and retried on the next attempt.
+
+### Liveness
+
+The server pings every 5s and drops a connection that has been silent for three consecutive checks. The extension runs its own watchdog every 15s — driven by both a timer and a `chrome.alarms` alarm, so it survives service-worker termination — and rebuilds the connection when the server goes silent for 20s or stops acknowledging `keepalive` frames. Reconnect attempts back off up to 30s and never stop.
 
 ## Cookies And Storage
 

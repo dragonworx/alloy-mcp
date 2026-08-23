@@ -113,6 +113,8 @@ Call these tools from the MCP client, in order:
 
 The extension badge shows `ON` only after mutual authentication. `PAIR` means the popup needs the matching token, `OFF` means the server is unavailable, and `...` means authentication is in progress.
 
+The popup reports the connection the background worker can actually prove, not just whether a socket object exists. Opening it sends a live round trip to the server, so an **amber dot / "Connection stale"** means the socket is open but the server has stopped answering — the extension tears it down and reconnects on its own. **Reconnect** is always available and forces a fresh socket and handshake immediately, which is the fastest way out of any wedged state.
+
 ## What It Covers
 
 The 73-tool surface spans:
@@ -167,9 +169,9 @@ Controls in place:
 
 - The server binds only to localhost, and WebSocket upgrades require a `chrome-extension://` origin.
 - Both peers prove possession of the pairing token with role- and phase-bound HMAC-SHA-256, finalized against a fresh server-issued confirmation nonce. The token itself is never transmitted, and a captured proof cannot be replayed as final confirmation.
-- Only one pending or authenticated connection is accepted; handshakes time out, and message sizes are capped.
+- One authenticated connection at a time. A newly authenticated extension replaces the previous one, so a dead socket cannot hold the slot; handshakes time out, and message sizes are capped.
 - The logger records tool names and protocol state only — never tool arguments, results, or browsing URLs.
-- Reconnection is blocked until prior page hooks, debugger sessions, request rules, and monitor state are cleaned up.
+- Each connection attempt is blocked until prior page hooks, debugger sessions, request rules, and monitor state are cleaned up. A failed cleanup is reported and retried on the next attempt rather than leaving the extension offline.
 
 Do not expose the WebSocket port through a tunnel, proxy, or container port mapping. Full trust model, token rotation, and reporting guidance: [SECURITY.md](SECURITY.md).
 
