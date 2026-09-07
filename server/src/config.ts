@@ -27,8 +27,10 @@ export interface ServerConfig {
 
 export const defaultConfig: ServerConfig = {
   websocket: {
-    port: 3001,
-    host: "localhost",
+    port: 3026,
+    // IPv4 loopback literal, not "localhost": Bun resolves "localhost" to a single
+    // address family (often ::1), which Chrome — connecting over IPv4 — cannot reach.
+    host: "127.0.0.1",
     maxConnections: 1,
   },
   timeouts: {

@@ -113,7 +113,27 @@ Call these tools from the MCP client, in order:
 
 The extension badge shows `ON` only after mutual authentication. `PAIR` means the popup needs the matching token, `OFF` means the server is unavailable, and `...` means authentication is in progress.
 
-The popup reports the connection the background worker can actually prove, not just whether a socket object exists. Opening it sends a live round trip to the server, so an **amber dot / "Connection stale"** means the socket is open but the server has stopped answering — the extension tears it down and reconnects on its own. **Reconnect** is always available and forces a fresh socket and handshake immediately, which is the fastest way out of any wedged state.
+The popup reports the connection the background worker can actually prove, not just whether a socket object exists. Opening it sends a live round trip to the server, so an **amber dot / "Connection stale"** means the socket is open but the server has stopped answering — the extension tears it down and reconnects on its own. **Reconnect** is always available and forces a fresh socket and handshake immediately, which is the fastest way out of any wedged state. **Re-pair** stops the reconnect loop and reopens the token field — use it when a stored-but-wrong token keeps the popup stuck on `...` without ever offering the box.
+
+### Re-pairing and token changes
+
+The server reads the pairing token once at startup and keeps it in memory; `bun run pair` prints whatever token is currently in the file. That gives two distinct workflows:
+
+- **Re-sync the extension to a running server.** Leave the server running, run `bun run pair`, click **Re-pair** in the popup, paste the token, and select **Pair extension**. The token applies live — no server restart and no extension reload.
+- **Rotate to a brand-new token.** Delete `~/.config/alloy-mcp/token`, then restart the server so it mints and loads a fresh one, then re-pair the extension. The restart is required because a running server never re-reads the file.
+
+On macOS, copy the current token straight to the clipboard:
+
+```bash
+bun run pair | sed -n '2p' | tr -d '\n' | pbcopy
+```
+
+| Change | Restart server | Reload extension | Re-pair |
+| --- | :---: | :---: | :---: |
+| Re-sync extension to the running server | No | No | Yes |
+| Rotate to a new token | Yes | No | Yes |
+| Edit extension files | No | Yes | No |
+| Edit server files | Yes | No | No |
 
 ## What It Covers
 

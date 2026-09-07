@@ -172,7 +172,7 @@ For server-only debugging without an MCP client:
 bun run dev
 ```
 
-`dev` watches TypeScript files and restarts the server. Stop it before enabling the server in an MCP client because only one server may own port 3001. For normal agent-driven development, let the MCP client run the non-watching command from its configuration and restart that MCP server after changing server code.
+`dev` watches TypeScript files and restarts the server. Stop it before enabling the server in an MCP client because only one server may own port 3026. For normal agent-driven development, let the MCP client run the non-watching command from its configuration and restart that MCP server after changing server code.
 
 After changing extension code:
 
@@ -201,7 +201,7 @@ The MCP process is running, but the extension is not authenticated. Open the pop
 
 - **Pairing required** - confirm the popup token matches `bun run pair`.
 - **Connection stale** - the socket is open but the server stopped answering. The extension reconnects on its own; select **Reconnect** to skip the wait.
-- **Disconnected - retrying** - the server is unreachable. Check that it is running and that nothing else holds port 3001.
+- **Disconnected - retrying** - the server is unreachable. Check that it is running and that nothing else holds port 3026.
 
 Selecting **Reconnect** forces a fresh socket and handshake at any time, including when the popup claims to be connected.
 
@@ -209,7 +209,7 @@ Selecting **Reconnect** forces a fresh socket and handshake at any time, includi
 
 Use the absolute path from `command -v bun` in the client configuration. This is common for desktop applications that do not inherit an interactive shell's `PATH`.
 
-### Port 3001 is already in use
+### Port 3026 is already in use
 
 Another MCP client, `bun run start`, or `bun run dev` already owns the extension connection. Stop it and let exactly one client start Alloy MCP. The server intentionally does not terminate other processes.
 

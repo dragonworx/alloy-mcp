@@ -11,6 +11,7 @@ interface HarnessOptions {
   captureGate?: Promise<void>;
   executeScriptGate?: Promise<void>;
   failDynamicCleanup?: boolean;
+  hangDynamicCleanup?: boolean;
   immediateCaptureTimeouts?: number;
   immediateTimeouts?: boolean;
   page?: {
@@ -171,6 +172,7 @@ function createHarness(options: HarnessOptions = {}) {
       getDynamicRules: async () => {
         dynamicCleanupCalls++;
         if (options.failDynamicCleanup) throw new Error("dynamic cleanup failed");
+        if (options.hangDynamicCleanup) return new Promise(() => {});
         return [];
       },
       updateDynamicRules: async () => undefined,
@@ -352,6 +354,40 @@ describe("extension lifecycle", () => {
     await flushTasks();
     expect(harness.dynamicCleanupCalls).toBe(2);
     expect(harness.webSocketCalls).toBe(0);
+  });
+
+  test("cleanup that hangs times out and retries instead of deadlocking", async () => {
+    const harness = createHarness({ hangDynamicCleanup: true, immediateTimeouts: true });
+    await settle();
+
+    // The hung cleanup hits the timeout and is treated as a failure: no socket,
+    // cleanupReady stays false, but the cached promise is cleared for a retry.
+    expect(harness.dynamicCleanupCalls).toBe(1);
+    expect(harness.webSocketCalls).toBe(0);
+    expect(harness.api.CONNECTION.cleanupReady).toBe(false);
+
+    // A watchdog tick runs a fresh attempt instead of awaiting the dead promise.
+    harness.intervals[0]();
+    await settle();
+    expect(harness.dynamicCleanupCalls).toBe(2);
+    expect(harness.webSocketCalls).toBe(0);
+  });
+
+  test("session cleanup completes when a tab injection never returns", async () => {
+    // An executeScript that never settles models a discarded or unresponsive tab.
+    const harness = createHarness({
+      tabs: [{ id: 1 }, { id: 2 }, { id: 3 }],
+      executeScriptGate: new Promise<void>(() => {}),
+      immediateTimeouts: true,
+    });
+    await settle();
+
+    let resolved = false;
+    void harness.api.cleanupMcpSession().then(() => { resolved = true; });
+    await settle();
+
+    // Without the per-tab bound, allSettled would await the hung injection forever.
+    expect(resolved).toBe(true);
   });
 
   test("cleanup restores tracked page hooks and discards monitor state", async () => {

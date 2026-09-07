@@ -73,7 +73,7 @@ chrome://extensions
 5. Open the Alloy MCP extension popup.
 6. Paste the token printed by `bun run setup` and select **Pair extension**.
 
-The extension cannot connect until VS Code starts the MCP server in step 4. A temporary `WebSocket connection to 'ws://localhost:3001/' failed` message before then is expected; the extension retries automatically.
+The extension cannot connect until VS Code starts the MCP server in step 4. A temporary `WebSocket connection to 'ws://127.0.0.1:3026/' failed` message before then is expected; the extension retries automatically.
 
 For local `file://` pages, open the extension details and enable **Allow access to file URLs**.
 
@@ -142,7 +142,7 @@ For another workspace, use the absolute-path global example inside that workspac
 4. Select **Start**.
 5. Approve the Alloy MCP tools if VS Code prompts for permission.
 
-The extension popup should change to connected and its badge should show `ON`. Do not also run `bun run start`; the VS Code-managed and manually started servers cannot both own port 3001.
+The extension popup should change to connected and its badge should show `ON`. Do not also run `bun run start`; the VS Code-managed and manually started servers cannot both own port 3026.
 
 Only start Alloy MCP in one VS Code window at a time. This installation controls one Chrome profile through one authenticated extension connection.
 
@@ -194,7 +194,7 @@ Paste it into the extension popup, select **Pair extension**, and restart `alloy
 
 Run `command -v bun` in a terminal and use that absolute path as the configuration's `command` value.
 
-### Port 3001 Is Already In Use
+### Port 3026 Is Already In Use
 
 Stop Alloy MCP in other VS Code windows and stop any manual `bun run start` or `bun run dev` process. Then start the server from the intended VS Code window.
 

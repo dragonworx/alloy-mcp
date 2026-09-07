@@ -32,6 +32,7 @@ test("pairing validation survives connection status refreshes", () => {
       "pairBtn",
       "pairError",
       "reconnectBtn",
+      "repairBtn",
       "statusDetail",
       "lastEventValue",
       "serverValue",
@@ -52,7 +53,7 @@ test("pairing validation survives connection status refreshes", () => {
             callback({
               connected: false,
               authError: "Pairing token required",
-              url: "ws://localhost:3001",
+              url: "ws://127.0.0.1:3026",
               reconnectAttempts: 1,
               toolCount: 0,
             });

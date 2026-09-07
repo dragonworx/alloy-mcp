@@ -7,6 +7,7 @@ const pairingToken = document.getElementById("pairingToken");
 const pairBtn = document.getElementById("pairBtn");
 const pairError = document.getElementById("pairError");
 const reconnectBtn = document.getElementById("reconnectBtn");
+const repairBtn = document.getElementById("repairBtn");
 const lastEventValue = document.getElementById("lastEventValue");
 
 const STATE_LABELS = {
@@ -90,6 +91,9 @@ function updateUI(status) {
   // looks healthy is exactly when the user needs to force a fresh one.
   reconnectBtn.hidden = false;
   reconnectBtn.disabled = false;
+  // Offer "Re-pair" whenever the token box is hidden — that is exactly the
+  // stuck-with-a-stored-token case where the box is otherwise unreachable.
+  repairBtn.hidden = !pairing.hidden;
 }
 
 function applyResponse(response) {
@@ -112,6 +116,13 @@ reconnectBtn.addEventListener("click", () => {
   statusDetail.textContent = "Tearing down the current socket and starting over.";
   chrome.runtime.sendMessage({ action: "reconnect" }, () => {
     setTimeout(verifyStatus, 1200);
+  });
+});
+
+repairBtn.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ action: "enterPairingMode" }, () => {
+    fetchStatus();
+    pairingToken.focus();
   });
 });
 

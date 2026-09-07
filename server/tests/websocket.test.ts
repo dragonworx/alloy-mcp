@@ -6,7 +6,7 @@ describe("WebSocket admission", () => {
   test("accepts only Chrome extension origins", () => {
     expect(isAllowedExtensionOrigin("chrome-extension://abcdefghijklmnopabcdefghijklmnop")).toBe(true);
     expect(isAllowedExtensionOrigin("https://example.com")).toBe(false);
-    expect(isAllowedExtensionOrigin("http://localhost:3001")).toBe(false);
+    expect(isAllowedExtensionOrigin("http://localhost:3026")).toBe(false);
     expect(isAllowedExtensionOrigin(null)).toBe(false);
   });
 

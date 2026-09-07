@@ -67,7 +67,7 @@ Also verify:
 - `emulate_media` changes `matchMedia`, then resets with no override fields
 - `set_geolocation` changes the page API, then `clear_geolocation` restores it
 - closing an emulated tab leaves no debugger attachment
-- server shutdown frees port 3001
+- server shutdown frees port 3026
 
 ## One-Server Rule
 

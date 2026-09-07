@@ -12,7 +12,9 @@ const WATCHDOG_ALARM = "alloy-connection-watchdog";
 
 const CONNECTION = {
   ws: null,
-  url: "ws://localhost:3001",
+  // IPv4 loopback literal so Chrome connects to the same address family the
+  // server binds. "localhost" is ambiguous (IPv4 vs IPv6) and can miss the server.
+  url: "ws://127.0.0.1:3026",
   state: "starting",
   authenticated: false,
   authContext: null,
@@ -180,6 +182,22 @@ function forceReconnect(reason, { manual = false } = {}) {
   }
   setState(CONNECTION.pairingRequired ? "pairing_required" : "connecting");
   return prepareConnection();
+}
+
+/**
+ * Escape hatch for a stored-but-wrong token: halt all reconnect activity and
+ * wait for a fresh token. Without this, a bad token leaves the socket stuck
+ * retrying forever and the popup never reveals the pairing box.
+ */
+function enterPairingMode() {
+  CONNECTION.pairingRequired = true;
+  CONNECTION.authError = "Waiting for a new pairing token";
+  teardownSocket("Entering pairing mode");
+  clearTimeout(CONNECTION.reconnectTimer);
+  CONNECTION.reconnectTimer = null;
+  CONNECTION.nextRetryAt = 0;
+  CONNECTION.reconnectAttempts = 0;
+  setState("pairing_required");
 }
 
 const PAIRING_TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
@@ -2807,6 +2825,16 @@ function removeNetworkRulesForTab(tabId) {
   });
 }
 
+// One unresponsive or discarded tab must not stall session cleanup, so bound
+// each per-tab operation and let it settle no matter what the tab does.
+const TAB_CLEANUP_TIMEOUT_MS = 1_500;
+function boundedTabCleanup(operation) {
+  return Promise.race([
+    Promise.resolve(operation).catch(() => undefined),
+    new Promise(resolve => setTimeout(() => resolve(undefined), TAB_CLEANUP_TIMEOUT_MS)),
+  ]);
+}
+
 async function cleanupMcpSession() {
   while (activeToolRequests.size > 0) {
     await Promise.allSettled(Array.from(activeToolRequests));
@@ -2817,16 +2845,21 @@ async function cleanupMcpSession() {
   const liveTabIds = new Set(tabs.flatMap(tab => tab.id == null ? [] : [tab.id]));
   const trackedCleanup = [];
   for (const tabId of consoleLogs.keys()) {
-    if (liveTabIds.has(tabId)) trackedCleanup.push(clearConsoleMonitor(tabId));
+    if (liveTabIds.has(tabId)) trackedCleanup.push(boundedTabCleanup(clearConsoleMonitor(tabId)));
   }
   for (const tabId of dialogOverrideTabs) {
-    if (liveTabIds.has(tabId)) trackedCleanup.push(clearDialogHandler(tabId));
+    if (liveTabIds.has(tabId)) trackedCleanup.push(boundedTabCleanup(clearDialogHandler(tabId)));
   }
   await Promise.all(trackedCleanup);
 
+  // Skip discarded tabs: injecting into one force-reloads it and can hang, and
+  // bound every call so a single unresponsive tab cannot stall a large tab set.
   await Promise.allSettled(tabs.flatMap(tab => {
-    if (tab.id == null) return [];
-    return [clearConsoleMonitor(tab.id), clearDialogHandler(tab.id)];
+    if (tab.id == null || tab.discarded) return [];
+    return [
+      boundedTabCleanup(clearConsoleMonitor(tab.id)),
+      boundedTabCleanup(clearDialogHandler(tab.id)),
+    ];
   }));
   consoleLogs.clear();
   dialogOverrideTabs.clear();
@@ -2838,13 +2871,32 @@ async function cleanupMcpSession() {
   await clearSessionNetworkRules();
 }
 
+// A cleanup step that never settles must not deadlock the connection. The
+// cached promise below is shared by every attempt, so one hung Chrome API would
+// otherwise leave the extension stuck in "connecting" forever — no socket, no
+// error, no retry. Bound it: a stall rejects like a failure, which clears the
+// cached promise so the next attempt and the watchdog can retry.
+const CLEANUP_TIMEOUT_MS = 5_000;
+
 function ensureCleanSession() {
   if (CONNECTION.cleanupPromise) return CONNECTION.cleanupPromise;
 
   CONNECTION.cleanupReady = false;
   CONNECTION.cleanupPromise = (async () => {
-    await clearLegacyDynamicRules();
-    await cleanupMcpSession();
+    let timer;
+    try {
+      await Promise.race([
+        (async () => {
+          await clearLegacyDynamicRules();
+          await cleanupMcpSession();
+        })(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Session cleanup timed out")), CLEANUP_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
     CONNECTION.cleanupReady = true;
   })().finally(() => {
     CONNECTION.cleanupPromise = null;
@@ -2946,6 +2998,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === "reconnect") {
     void forceReconnect("Manual reconnect", { manual: true });
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.action === "enterPairingMode") {
+    enterPairingMode();
     sendResponse({ success: true });
     return true;
   }

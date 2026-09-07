@@ -26,7 +26,7 @@ describe("authenticated WebSocket bridge", () => {
     expect(bridge.isConnected).toBe(false);
     expect(bridge.listeningPort).toBeNumber();
 
-    socket = new WebSocket(`ws://localhost:${bridge.listeningPort}`, {
+    socket = new WebSocket(`ws://127.0.0.1:${bridge.listeningPort}`, {
       headers: {
         Origin: "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
       },
@@ -115,7 +115,7 @@ describe("authenticated WebSocket bridge", () => {
     }, token);
     bridge.start();
 
-    socket = new WebSocket(`ws://localhost:${bridge.listeningPort}`, {
+    socket = new WebSocket(`ws://127.0.0.1:${bridge.listeningPort}`, {
       headers: { Origin: "https://example.com" },
     } as never);
 
@@ -134,7 +134,7 @@ describe("authenticated WebSocket bridge", () => {
     }, token);
     bridge.start();
 
-    socket = new WebSocket(`ws://localhost:${bridge.listeningPort}`, {
+    socket = new WebSocket(`ws://127.0.0.1:${bridge.listeningPort}`, {
       headers: {
         Origin: "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
       },
@@ -168,7 +168,7 @@ describe("authenticated WebSocket bridge", () => {
     bridge.setServerToolNames(["list_tabs"]);
     bridge.start();
 
-    socket = new WebSocket(`ws://localhost:${bridge.listeningPort}`, {
+    socket = new WebSocket(`ws://127.0.0.1:${bridge.listeningPort}`, {
       headers: {
         Origin: "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
       },
@@ -211,7 +211,7 @@ const EXTENSION_ORIGIN = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
 
 /** Drive a full two-way handshake and resolve once the bridge accepts the socket. */
 async function authenticate(bridge: WebSocketBridge, nonceSeed: string): Promise<WebSocket> {
-  const ws = new WebSocket(`ws://localhost:${bridge.listeningPort}`, {
+  const ws = new WebSocket(`ws://127.0.0.1:${bridge.listeningPort}`, {
     headers: { Origin: EXTENSION_ORIGIN },
   } as never);
   const extensionNonce = nonceSeed.repeat(32);
