@@ -27,13 +27,36 @@ The trade-off is that this is a *development* tool, not a sandboxed CI runner. S
 
 | | |
 | --- | --- |
-| Runtime | Bun 1.3 or newer |
+| Runtime | Bun 1.3 or newer — see [Install Bun](#1-install-bun) |
 | Browser | Chrome 116 or newer |
 | Client | Any MCP client — VS Code, Claude Code, Claude Desktop, Cursor, Cline, Codex, Gemini CLI |
 
 ## Setup
 
-### 1. Install
+### 1. Install Bun
+
+Alloy MCP runs on [Bun](https://bun.com) 1.3 or newer. Check whether you already have it:
+
+```bash
+bun --version
+```
+
+If the command is not found, install it:
+
+```bash
+# macOS / Linux / WSL
+curl -fsSL https://bun.com/install | bash
+
+# macOS with Homebrew
+brew install oven-sh/bun/bun
+
+# Windows (PowerShell)
+powershell -c "irm bun.sh/install.ps1 | iex"
+```
+
+Open a new shell afterwards so `bun` is on your `PATH`, then re-run `bun --version` to confirm.
+
+### 2. Install dependencies
 
 From the repository root:
 
@@ -43,7 +66,7 @@ bun run setup
 
 This installs the locked server dependencies and creates or reveals the local pairing token. Use `bun run install-server` when you only need to refresh dependencies.
 
-### 2. Load the extension
+### 3. Load the extension
 
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
@@ -53,7 +76,7 @@ This installs the locked server dependencies and creates or reveals the local pa
 
 For `file://` test fixtures, enable **Allow access to file URLs** on the extension details page.
 
-### 3. Pair the extension
+### 4. Pair the extension
 
 Generate or reveal the local pairing token:
 
@@ -65,7 +88,7 @@ Open the extension popup, paste the 64-character token, and select **Pair extens
 
 Set `ALLOY_MCP_TOKEN` to use an externally managed token, or `ALLOY_MCP_TOKEN_FILE` to use another token file.
 
-### 4. Configure one MCP client
+### 5. Configure one MCP client
 
 > **One shared server.** The MCP client owns its server process. If you run several clients (or `bun run start`) at once, the first to launch becomes the hub that owns the Chrome connection and the rest detect and share it automatically, so they never compete for the WebSocket port.
 
@@ -101,7 +124,7 @@ For **any other MCP client**, configure `bun run /absolute/path/to/alloy-mcp/ser
 
 See [doc/SETUP.md](doc/SETUP.md) for Claude Code, Claude Desktop, Cursor, Cline, Codex, Gemini CLI, and generic stdio configurations. It also covers GUI application paths, environment variables, development, and troubleshooting.
 
-### 5. Verify
+### 6. Verify
 
 Call these tools from the MCP client, in order:
 
