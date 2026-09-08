@@ -82,7 +82,7 @@ export function loadPairingToken(): string {
 
 export function createPairingProof(
   token: string,
-  role: "extension" | "server" | "extension-confirmation",
+  role: "extension" | "server" | "extension-confirmation" | "follower" | "hub",
   serverNonce: string,
   extensionNonce: string,
   confirmationNonce?: string

@@ -171,7 +171,7 @@ function printNextSteps(scope: Choice["scope"], token: string): void {
     console.log("     The user configuration applies to every workspace.");
   }
   console.log("  5. In Copilot Agent mode, run the ping, health_check, and list_tabs tools.\n");
-  console.log("Only one VS Code window should own the alloy server at a time.");
+  console.log("You can start alloy in multiple VS Code windows; the first becomes the shared hub and the rest join it.");
 }
 
 main().catch(error => {

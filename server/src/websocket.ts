@@ -1,6 +1,7 @@
-import type { ServerWebSocket } from "bun";
+import type { Server, ServerWebSocket } from "bun";
 import { randomBytes } from "node:crypto";
 import { createPairingProof, verifyPairingProof } from "./auth.js";
+import { ErrorCode } from "./errors.js";
 import { logger } from "./logger.js";
 import type { ServerConfig } from "./config.js";
 import { serverOnlyToolNames } from "./tools.js";
@@ -43,6 +44,31 @@ interface HandshakeMessage {
   proof: string;
 }
 
+export type SocketKind = "extension" | "follower";
+type SocketData = { kind: SocketKind };
+
+/** A peer Alloy server that relays its tool calls through this leader. */
+interface FollowerState {
+  authenticated: boolean;
+  serverNonce: string;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+interface FollowerHandshakeMessage {
+  type: "follower_handshake";
+  followerNonce: string;
+  proof: string;
+}
+
+/** Followers connect here; the extension uses the root path. */
+const FOLLOWER_PATH = "/follower";
+/** A follower (or a leader waiting on one) must finish auth within this window. */
+const FOLLOWER_CONNECT_TIMEOUT_MS = 4_000;
+/** Delay before a stranded follower retries leading or rejoining. */
+const HUB_REJOIN_DELAY_MS = 250;
+/** Follower -> leader keepalive cadence; also refreshes cached extension status. */
+const HUB_KEEPALIVE_INTERVAL_MS = 5_000;
+
 export function isAllowedExtensionOrigin(origin: string | null): boolean {
   return origin !== null && /^chrome-extension:\/\/[a-p]{32}\/?$/.test(origin);
 }
@@ -69,6 +95,17 @@ export function isValidHandshakeMessage(value: unknown): value is HandshakeMessa
     && message.capabilities.every(
       capability => typeof capability === "string" && capability.length > 0 && capability.length <= 100
     );
+}
+
+export function isValidFollowerHandshake(value: unknown): value is FollowerHandshakeMessage {
+  if (typeof value !== "object" || value === null) return false;
+  const message = value as Record<string, unknown>;
+  return message.type === "follower_handshake"
+    && typeof message.followerNonce === "string"
+    && message.followerNonce.length >= 16
+    && message.followerNonce.length <= 128
+    && typeof message.proof === "string"
+    && /^[a-f0-9]{64}$/i.test(message.proof);
 }
 
 export function getToolRequestTimeout(
@@ -117,6 +154,33 @@ export class WebSocketBridge {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private serverToolNames: string[] = [];
 
+  /**
+   * "leader" owns the port and the single extension connection. "follower"
+   * could not bind the port, so it relays its tool calls through the leader.
+   * The role flips at runtime during re-election when a leader goes away.
+   */
+  private role: "leader" | "follower" = "leader";
+  private stopped = false;
+
+  // Leader-only: peer servers relaying their tool calls through us.
+  private readonly followers = new Map<ServerWebSocket<SocketData>, FollowerState>();
+  // Leader-only: maps an in-flight relayed request to the follower awaiting it.
+  private readonly followerRouting = new Map<string, ServerWebSocket<SocketData>>();
+
+  // Follower-only: our client link to the leader and the status it reports.
+  private hubClient: WebSocket | null = null;
+  private hubAuthenticated = false;
+  private hubServerNonce: string | null = null;
+  private hubNonce = "";
+  private hubKeepalive: ReturnType<typeof setInterval> | null = null;
+  private hubConnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private rejoinTimer: ReturnType<typeof setTimeout> | null = null;
+  private hubExtensionConnected = false;
+  private hubExtensionVersion: string | null = null;
+  private hubExtensionCapabilities: string[] = [];
+  private hubLastActivityTime = 0;
+  private hubConnectedSince = 0;
+
   constructor(
     private readonly config: ServerConfig,
     private readonly pairingToken: string
@@ -128,14 +192,17 @@ export class WebSocketBridge {
   }
 
   get isConnected(): boolean {
+    if (this.role === "follower") return this.hubAuthenticated && this.hubExtensionConnected;
     return this.connection !== null;
   }
 
   get extensionVersion(): string | null {
+    if (this.role === "follower") return this.hubExtensionVersion;
     return this.extensionInfo?.version ?? null;
   }
 
   get extensionCapabilities(): string[] {
+    if (this.role === "follower") return this.hubExtensionCapabilities;
     return this.extensionInfo?.capabilities ?? [];
   }
 
@@ -145,48 +212,109 @@ export class WebSocketBridge {
 
   /** Milliseconds since the extension last sent anything, or null when disconnected. */
   get millisecondsSinceLastActivity(): number | null {
+    if (this.role === "follower") {
+      return this.hubExtensionConnected ? Date.now() - this.hubLastActivityTime : null;
+    }
     return this.connection ? Date.now() - this.lastActivityTime : null;
   }
 
   get connectedSinceTimestamp(): number | null {
+    if (this.role === "follower") {
+      return this.hubExtensionConnected ? this.hubConnectedSince : null;
+    }
     return this.connection ? this.connectedSince : null;
   }
 
   start(): void {
-    const { port, host } = this.config.websocket;
+    this.stopped = false;
+    this.joinOrLead();
+  }
 
+  /**
+   * Elect a role by trying to own the port. Whoever binds first is the leader;
+   * every other window's server becomes a follower that relays through it.
+   */
+  private joinOrLead(): void {
+    if (this.stopped) return;
+    this.clearRejoinTimer();
+    if (this.bindAsLeader()) return;
+    this.connectAsFollower();
+  }
+
+  private bindAsLeader(): boolean {
+    const { port, host } = this.config.websocket;
     try {
       this.server = Bun.serve({
         hostname: host,
         port,
-        fetch(req, server) {
-          // Only upgrade actual WebSocket requests
-          if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-            if (!isAllowedExtensionOrigin(req.headers.get("origin"))) {
-              return new Response("Forbidden", { status: 403 });
-            }
-            if (server.upgrade(req, { data: undefined })) return undefined;
-          }
-          return new Response("WebSocket server", { status: 200 });
-        },
+        fetch: (req, server) => this.handleUpgrade(req, server as Server<SocketData>),
         websocket: {
-          open: (ws) => this.handleOpen(ws),
-          message: (ws, message) => void this.handleMessage(ws, message),
-          close: (ws) => this.handleClose(ws),
+          open: (ws) => this.dispatchOpen(ws as ServerWebSocket<SocketData>),
+          message: (ws, message) => this.dispatchMessage(ws as ServerWebSocket<SocketData>, message),
+          close: (ws) => this.dispatchClose(ws as ServerWebSocket<SocketData>),
           maxPayloadLength: 32 * 1_048_576,
         },
       });
     } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
+        logger.info(`Port ${port} is already owned by an Alloy hub; joining it as a follower`);
+        return false;
+      }
       logger.error(`Failed to bind WebSocket server on ${host}:${port}`, (err as Error).message);
       throw err;
     }
 
-    logger.info(`WebSocket server listening on ws://${host}:${port}`);
+    this.role = "leader";
+    logger.info(`WebSocket server listening on ws://${host}:${port} (hub leader)`);
+    return true;
+  }
+
+  private handleUpgrade(req: Request, server: Server<SocketData>): Response | undefined {
+    if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      return new Response("WebSocket server", { status: 200 });
+    }
+
+    const origin = req.headers.get("origin");
+    const pathname = new URL(req.url).pathname;
+
+    if (pathname === FOLLOWER_PATH) {
+      // Followers are local Alloy server processes, never browser pages. A native
+      // WebSocket client sends no Origin; browsers always do. Refusing any Origin
+      // keeps web pages off this path even before the token handshake runs.
+      if (origin !== null) return new Response("Forbidden", { status: 403 });
+      if (server.upgrade(req, { data: { kind: "follower" } as SocketData })) return undefined;
+      return new Response("Upgrade failed", { status: 400 });
+    }
+
+    if (!isAllowedExtensionOrigin(origin)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    if (server.upgrade(req, { data: { kind: "extension" } as SocketData })) return undefined;
+    return new Response("WebSocket server", { status: 200 });
+  }
+
+  private dispatchOpen(ws: ServerWebSocket<SocketData>): void {
+    if (ws.data.kind === "follower") this.handleFollowerOpen(ws);
+    else this.handleOpen(ws);
+  }
+
+  private dispatchMessage(ws: ServerWebSocket<SocketData>, message: string | Buffer): void {
+    if (ws.data.kind === "follower") this.handleFollowerMessage(ws, message);
+    else void this.handleMessage(ws, message);
+  }
+
+  private dispatchClose(ws: ServerWebSocket<SocketData>): void {
+    if (ws.data.kind === "follower") this.handleFollowerSocketClose(ws);
+    else this.handleClose(ws);
   }
 
   stop(): void {
+    this.stopped = true;
     this.stopHeartbeat();
+    this.stopHubKeepalive();
     this.clearHandshakeTimer();
+    this.clearHubConnectTimer();
+    this.clearRejoinTimer();
     this.rejectAllPending("shutdown", "Server shutting down");
     if (this.connection) {
       try {
@@ -200,11 +328,30 @@ export class WebSocketBridge {
       } catch (_) { /* ignore close errors */ }
       this.clearPendingState();
     }
+    for (const [ws, state] of this.followers) {
+      if (state.timer) clearTimeout(state.timer);
+      try {
+        ws.close(1001, "Server shutting down");
+      } catch (_) { /* ignore close errors */ }
+    }
+    this.followers.clear();
+    this.followerRouting.clear();
+    if (this.hubClient) {
+      try {
+        this.hubClient.close(1001, "Server shutting down");
+      } catch (_) { /* ignore close errors */ }
+      this.hubClient = null;
+    }
+    this.hubAuthenticated = false;
+    this.hubExtensionConnected = false;
     this.server?.stop();
-    logger.info("WebSocket server stopped");
+    this.server = null;
+    logger.info("WebSocket bridge stopped");
   }
 
   async sendToolRequest(tool: string, params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.role === "follower") return this.sendViaHub(tool, params);
+
     const requestId = crypto.randomUUID();
     const request: ToolRequest = {
       requestId,
@@ -229,6 +376,36 @@ export class WebSocketBridge {
 
       if (this.isConnected) {
         this.send(request);
+      }
+    });
+  }
+
+  /** Follower path: relay a tool call to the leader and await its response. */
+  private sendViaHub(tool: string, params: Record<string, unknown>): Promise<ToolResponse> {
+    const client = this.hubClient;
+    if (!this.hubAuthenticated || !client) {
+      return Promise.reject(new BridgeRequestError("not_connected", "Alloy hub is not connected"));
+    }
+    if (!this.hubExtensionConnected) {
+      return Promise.reject(new BridgeRequestError("not_connected", "Chrome extension is not connected"));
+    }
+
+    const requestId = crypto.randomUUID();
+    const request: ToolRequest = { requestId, tool, params, timestamp: Date.now() };
+
+    return new Promise<ToolResponse>((resolve, reject) => {
+      const timeout = getToolRequestTimeout(this.config, tool, params);
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new BridgeRequestError("timeout", `Tool execution timed out after ${timeout}ms`));
+      }, timeout);
+      this.pendingRequests.set(requestId, { resolve, reject, timer });
+      try {
+        client.send(JSON.stringify(request));
+      } catch (_) {
+        clearTimeout(timer);
+        this.pendingRequests.delete(requestId);
+        reject(new BridgeRequestError("connection_lost", "Alloy hub connection lost"));
       }
     });
   }
@@ -315,6 +492,14 @@ export class WebSocketBridge {
       }
 
       if (data.requestId) {
+        const follower = this.followerRouting.get(data.requestId);
+        if (follower) {
+          this.followerRouting.delete(data.requestId);
+          try {
+            follower.send(JSON.stringify(data));
+          } catch (_) { /* follower vanished; drop the response */ }
+          return;
+        }
         this.handleToolResponse(data as ToolResponse);
       }
     } catch (err) {
@@ -372,6 +557,7 @@ export class WebSocketBridge {
     this.extensionInfo = null;
     this.stopHeartbeat();
     this.rejectAllPending("connection_lost", "Chrome extension disconnected");
+    this.broadcastHubStatus();
   }
 
   private beginHandshakeConfirmation(ws: ServerWebSocket<unknown>, msg: HandshakeMessage): void {
@@ -466,6 +652,7 @@ export class WebSocketBridge {
 
     this.startHeartbeat();
     this.send({ type: "auth_ready", timestamp: Date.now() });
+    this.broadcastHubStatus();
   }
 
   private handleToolResponse(response: ToolResponse): void {
@@ -510,6 +697,7 @@ export class WebSocketBridge {
               dead.close(4001, "Heartbeat timeout");
             } catch (_) { /* ignore close errors */ }
           }
+          this.broadcastHubStatus();
           return;
         }
       }
@@ -537,5 +725,281 @@ export class WebSocketBridge {
       pending.reject(new BridgeRequestError(reason, message));
     }
     this.pendingRequests.clear();
+  }
+
+  // ─── Leader: follower (peer server) handling ──────────────────────
+
+  private handleFollowerOpen(ws: ServerWebSocket<SocketData>): void {
+    const serverNonce = randomBytes(32).toString("hex");
+    const timer = setTimeout(() => {
+      if (this.followers.get(ws)?.authenticated === false) {
+        this.followers.delete(ws);
+        try {
+          ws.close(4002, "Follower handshake timed out");
+        } catch (_) { /* ignore close errors */ }
+      }
+    }, FOLLOWER_CONNECT_TIMEOUT_MS);
+    this.followers.set(ws, { authenticated: false, serverNonce, timer });
+    ws.send(JSON.stringify({ type: "auth_challenge", serverNonce, timestamp: Date.now() }));
+    logger.info("Follower connecting; awaiting handshake");
+  }
+
+  private handleFollowerMessage(ws: ServerWebSocket<SocketData>, message: string | Buffer): void {
+    const state = this.followers.get(ws);
+    if (!state) return;
+
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(typeof message === "string" ? message : message.toString());
+    } catch (_) {
+      this.dropFollower(ws, 4003, "Invalid follower message");
+      return;
+    }
+
+    if (!state.authenticated) {
+      this.authenticateFollower(ws, state, data);
+      return;
+    }
+
+    if (data.type === "keepalive") {
+      ws.send(JSON.stringify({ type: "keepalive_ack", ...this.hubStatusPayload(), timestamp: Date.now() }));
+      return;
+    }
+    if (typeof data.requestId === "string" && typeof data.tool === "string") {
+      this.relayFollowerRequest(ws, data as unknown as ToolRequest);
+    }
+  }
+
+  private authenticateFollower(
+    ws: ServerWebSocket<SocketData>,
+    state: FollowerState,
+    data: Record<string, unknown>
+  ): void {
+    if (!isValidFollowerHandshake(data)) {
+      this.dropFollower(ws, 4003, "Invalid follower handshake");
+      return;
+    }
+    const expected = createPairingProof(this.pairingToken, "follower", state.serverNonce, data.followerNonce);
+    if (!verifyPairingProof(data.proof, expected)) {
+      this.dropFollower(ws, 4004, "Follower authentication failed");
+      return;
+    }
+
+    state.authenticated = true;
+    if (state.timer) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+    const proof = createPairingProof(this.pairingToken, "hub", state.serverNonce, data.followerNonce);
+    ws.send(JSON.stringify({ type: "follower_ack", proof, timestamp: Date.now() }));
+    ws.send(JSON.stringify({ type: "hub_status", ...this.hubStatusPayload(), timestamp: Date.now() }));
+    logger.info("Follower authenticated; relaying its tool calls to the extension");
+  }
+
+  private relayFollowerRequest(ws: ServerWebSocket<SocketData>, request: ToolRequest): void {
+    if (!this.connection) {
+      ws.send(JSON.stringify({
+        requestId: request.requestId,
+        error: { message: "Chrome extension is not connected", code: ErrorCode.EXTENSION_NOT_CONNECTED },
+        timestamp: Date.now(),
+      }));
+      return;
+    }
+    this.followerRouting.set(request.requestId, ws);
+    this.send({
+      requestId: request.requestId,
+      tool: request.tool,
+      params: request.params,
+      timestamp: Date.now(),
+    });
+  }
+
+  private dropFollower(ws: ServerWebSocket<SocketData>, code: number, reason: string): void {
+    const state = this.followers.get(ws);
+    if (state?.timer) clearTimeout(state.timer);
+    this.followers.delete(ws);
+    try {
+      ws.close(code, reason);
+    } catch (_) { /* ignore close errors */ }
+  }
+
+  private handleFollowerSocketClose(ws: ServerWebSocket<SocketData>): void {
+    const state = this.followers.get(ws);
+    if (state?.timer) clearTimeout(state.timer);
+    this.followers.delete(ws);
+    for (const [requestId, target] of this.followerRouting) {
+      if (target === ws) this.followerRouting.delete(requestId);
+    }
+    logger.info("Follower disconnected");
+  }
+
+  private hubStatusPayload(): {
+    extensionConnected: boolean;
+    extensionVersion: string | null;
+    extensionCapabilities: string[];
+    lastActivityTime: number;
+    connectedSince: number;
+  } {
+    return {
+      extensionConnected: this.connection !== null,
+      extensionVersion: this.extensionInfo?.version ?? null,
+      extensionCapabilities: this.extensionInfo?.capabilities ?? [],
+      lastActivityTime: this.connection ? this.lastActivityTime : 0,
+      connectedSince: this.connection ? this.connectedSince : 0,
+    };
+  }
+
+  private broadcastHubStatus(): void {
+    if (this.followers.size === 0) return;
+    const payload = JSON.stringify({ type: "hub_status", ...this.hubStatusPayload(), timestamp: Date.now() });
+    for (const [ws, state] of this.followers) {
+      if (!state.authenticated) continue;
+      try {
+        ws.send(payload);
+      } catch (_) { /* ignore send errors */ }
+    }
+  }
+
+  // ─── Follower: client link to the leader ──────────────────────────
+
+  private connectAsFollower(): void {
+    if (this.stopped) return;
+    this.role = "follower";
+
+    const { port } = this.config.websocket;
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(`ws://127.0.0.1:${port}${FOLLOWER_PATH}`);
+    } catch (_) {
+      this.scheduleRejoin();
+      return;
+    }
+
+    this.hubClient = ws;
+    this.hubAuthenticated = false;
+    this.hubServerNonce = null;
+    this.hubNonce = randomBytes(16).toString("hex");
+    this.hubConnectTimer = setTimeout(() => {
+      if (!this.hubAuthenticated) {
+        try {
+          ws.close();
+        } catch (_) { /* ignore close errors */ }
+      }
+    }, FOLLOWER_CONNECT_TIMEOUT_MS);
+
+    ws.addEventListener("message", (event) => this.handleHubMessage(String(event.data)));
+    ws.addEventListener("close", () => this.onHubLinkClosed(ws));
+    ws.addEventListener("error", () => this.onHubLinkClosed(ws));
+  }
+
+  private handleHubMessage(raw: string): void {
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(raw);
+    } catch (_) {
+      return;
+    }
+
+    switch (data.type) {
+      case "auth_challenge": {
+        if (typeof data.serverNonce !== "string") return;
+        this.hubServerNonce = data.serverNonce;
+        const proof = createPairingProof(this.pairingToken, "follower", data.serverNonce, this.hubNonce);
+        this.hubClient?.send(JSON.stringify({ type: "follower_handshake", followerNonce: this.hubNonce, proof }));
+        return;
+      }
+      case "follower_ack": {
+        this.completeHubHandshake(data);
+        return;
+      }
+      case "hub_status":
+      case "keepalive_ack": {
+        this.applyHubStatus(data);
+        return;
+      }
+      default: {
+        if (typeof data.requestId === "string") this.handleToolResponse(data as unknown as ToolResponse);
+      }
+    }
+  }
+
+  private completeHubHandshake(data: Record<string, unknown>): void {
+    if (!this.hubServerNonce || typeof data.proof !== "string") return;
+    const expected = createPairingProof(this.pairingToken, "hub", this.hubServerNonce, this.hubNonce);
+    if (!verifyPairingProof(data.proof, expected)) {
+      logger.error("Alloy hub failed authentication; refusing to trust it");
+      try {
+        this.hubClient?.close(4004, "Hub authentication failed");
+      } catch (_) { /* ignore close errors */ }
+      return;
+    }
+    this.hubAuthenticated = true;
+    this.clearHubConnectTimer();
+    this.startHubKeepalive();
+    logger.info("Connected to the Alloy hub as a follower");
+  }
+
+  private applyHubStatus(data: Record<string, unknown>): void {
+    if (typeof data.extensionConnected === "boolean") this.hubExtensionConnected = data.extensionConnected;
+    if ("extensionVersion" in data) {
+      this.hubExtensionVersion = typeof data.extensionVersion === "string" ? data.extensionVersion : null;
+    }
+    if (Array.isArray(data.extensionCapabilities)) {
+      this.hubExtensionCapabilities = data.extensionCapabilities.filter((c): c is string => typeof c === "string");
+    }
+    if (typeof data.lastActivityTime === "number") this.hubLastActivityTime = data.lastActivityTime;
+    if (typeof data.connectedSince === "number") this.hubConnectedSince = data.connectedSince;
+  }
+
+  private onHubLinkClosed(ws: WebSocket): void {
+    if (this.stopped) return;
+    if (this.hubClient !== ws) return; // stale event from a superseded socket
+
+    this.hubClient = null;
+    this.hubAuthenticated = false;
+    this.hubExtensionConnected = false;
+    this.stopHubKeepalive();
+    this.clearHubConnectTimer();
+    this.rejectAllPending("connection_lost", "Alloy hub connection lost");
+    logger.warn("Alloy hub link closed; will try to lead or rejoin");
+    this.scheduleRejoin();
+  }
+
+  private startHubKeepalive(): void {
+    this.stopHubKeepalive();
+    this.hubKeepalive = setInterval(() => {
+      try {
+        this.hubClient?.send(JSON.stringify({ type: "keepalive", timestamp: Date.now() }));
+      } catch (_) { /* the close handler re-elects */ }
+    }, HUB_KEEPALIVE_INTERVAL_MS);
+  }
+
+  private stopHubKeepalive(): void {
+    if (this.hubKeepalive) {
+      clearInterval(this.hubKeepalive);
+      this.hubKeepalive = null;
+    }
+  }
+
+  private clearHubConnectTimer(): void {
+    if (this.hubConnectTimer) {
+      clearTimeout(this.hubConnectTimer);
+      this.hubConnectTimer = null;
+    }
+  }
+
+  private scheduleRejoin(): void {
+    if (this.stopped || this.rejoinTimer) return;
+    this.rejoinTimer = setTimeout(() => {
+      this.rejoinTimer = null;
+      this.joinOrLead();
+    }, HUB_REJOIN_DELAY_MS);
+  }
+
+  private clearRejoinTimer(): void {
+    if (this.rejoinTimer) {
+      clearTimeout(this.rejoinTimer);
+      this.rejoinTimer = null;
+    }
   }
 }

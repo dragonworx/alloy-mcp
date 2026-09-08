@@ -142,9 +142,9 @@ For another workspace, use the absolute-path global example inside that workspac
 4. Select **Start**.
 5. Approve the Alloy MCP tools if VS Code prompts for permission.
 
-The extension popup should change to connected and its badge should show `ON`. Do not also run `bun run start`; the VS Code-managed and manually started servers cannot both own port 3026.
+The extension popup should change to connected and its badge should show `ON`.
 
-Only start Alloy MCP in one VS Code window at a time. This installation controls one Chrome profile through one authenticated extension connection.
+You can start Alloy MCP in more than one VS Code window. The first server to start becomes the hub that owns the single Chrome extension connection; any others detect it and relay through it automatically, so they never compete for the port. When the window running the hub closes, another running server takes over within about a second.
 
 ### 5. Verify In Copilot Agent Mode
 
@@ -196,7 +196,7 @@ Run `command -v bun` in a terminal and use that absolute path as the configurati
 
 ### Port 3026 Is Already In Use
 
-Stop Alloy MCP in other VS Code windows and stop any manual `bun run start` or `bun run dev` process. Then start the server from the intended VS Code window.
+Alloy MCP servers now share one hub on this port, so a second Alloy server joins the first instead of failing. If startup still reports a bind failure, an unrelated program holds the port. Find it with `lsof -nP -iTCP:3026 -sTCP:LISTEN`, then stop that program or change `websocket.port` in `server/src/config.ts`.
 
 ### Tools Are Missing Or The Server Is Stale
 
@@ -210,6 +210,6 @@ When VS Code is not running Alloy MCP, the server can be started manually from t
 bun run start
 ```
 
-Stop the manual process before starting the VS Code-managed server.
+A manually started server and the VS Code-managed servers coexist: whichever launches first owns the hub and the others follow it, so you do not need to stop one before starting another.
 
 For environment variables, other MCP clients, and local development workflows, see [SETUP.md](SETUP.md). For browser acceptance testing, see [TESTING.md](TESTING.md).

@@ -69,11 +69,11 @@ Also verify:
 - closing an emulated tab leaves no debugger attachment
 - server shutdown frees port 3026
 
-## One-Server Rule
+## One Shared Hub
 
-The extension maintains one authenticated WebSocket connection. An MCP client normally starts its own stdio server, so do not run `bun run start` or `bun run dev` at the same time.
+The extension maintains one authenticated WebSocket connection, owned by whichever server started first (the hub). Additional servers — a second MCP client, `bun run start`, or `bun run dev` — detect the hub and relay their tool calls through it, so running more than one no longer conflicts. The watcher (`bun run dev`) is the exception worth avoiding during acceptance runs: each restart briefly hands the hub to another server.
 
-If startup reports `EADDRINUSE`, stop the existing owner. The server never kills another process automatically.
+A bind that still reports `EADDRINUSE` means an unrelated program owns the port; the server never kills another process automatically.
 
 ## Test Fixtures
 

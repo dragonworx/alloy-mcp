@@ -172,7 +172,7 @@ For server-only debugging without an MCP client:
 bun run dev
 ```
 
-`dev` watches TypeScript files and restarts the server. Stop it before enabling the server in an MCP client because only one server may own port 3026. For normal agent-driven development, let the MCP client run the non-watching command from its configuration and restart that MCP server after changing server code.
+`dev` watches TypeScript files and restarts the server. You can run it alongside an MCP client — servers share a single hub, so they will not fight over port 3026 — but the watcher's frequent restarts hand the hub back and forth, so for normal agent-driven development prefer letting the MCP client run the non-watching command from its configuration and restart that MCP server after changing server code.
 
 After changing extension code:
 
@@ -211,7 +211,7 @@ Use the absolute path from `command -v bun` in the client configuration. This is
 
 ### Port 3026 is already in use
 
-Another MCP client, `bun run start`, or `bun run dev` already owns the extension connection. Stop it and let exactly one client start Alloy MCP. The server intentionally does not terminate other processes.
+Alloy MCP servers share one hub on this port: a second Alloy server joins the first rather than failing. If a bind still fails, an unrelated program owns the port. Identify it with `lsof -nP -iTCP:3026 -sTCP:LISTEN` and stop it, or change `websocket.port` in `server/src/config.ts`. The server never terminates other processes.
 
 ### The server connects to the wrong output directory
 

@@ -267,6 +267,14 @@ function startBridge(): WebSocketBridge {
   return started;
 }
 
+async function waitFor(predicate: () => boolean, label: string, timeoutMs = 3_000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error(`Timed out waiting for ${label}`);
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
+
 describe("reconnect handling", () => {
   test("a newly authenticated extension supersedes the previous connection", async () => {
     bridge = startBridge();
@@ -331,5 +339,99 @@ describe("reconnect handling", () => {
 
     socket.send(JSON.stringify({ type: "keepalive", timestamp: Date.now() }));
     await acknowledged;
+  });
+});
+
+describe("shared hub across processes", () => {
+  const HUB_PORT = 39_026;
+  let leader: WebSocketBridge | null = null;
+  let follower: WebSocketBridge | null = null;
+  const extensions: WebSocket[] = [];
+
+  afterEach(() => {
+    for (const ext of extensions.splice(0)) {
+      try { ext.close(); } catch { /* ignore */ }
+    }
+    follower?.stop();
+    follower = null;
+    leader?.stop();
+    leader = null;
+  });
+
+  function startBridgeOn(port: number): WebSocketBridge {
+    const started = new WebSocketBridge({
+      ...defaultConfig,
+      websocket: { ...defaultConfig.websocket, port },
+    }, token);
+    started.setServerToolNames(["list_tabs"]);
+    started.start();
+    return started;
+  }
+
+  async function authenticateOn(bridge: WebSocketBridge, nonceSeed: string): Promise<WebSocket> {
+    const ws = await authenticate(bridge, nonceSeed);
+    extensions.push(ws);
+    return ws;
+  }
+
+  function answerListTabs(ext: WebSocket, result: unknown): void {
+    ext.addEventListener("message", (event) => {
+      const message = JSON.parse(String(event.data));
+      if (message.requestId && message.tool === "list_tabs") {
+        ext.send(JSON.stringify({ requestId: message.requestId, result, timestamp: Date.now() }));
+      }
+    });
+  }
+
+  test("a second server becomes a follower and relays tool calls through the leader", async () => {
+    leader = startBridgeOn(HUB_PORT);
+    const extension = await authenticateOn(leader, "ef");
+    answerListTabs(extension, [{ tabId: 3, title: "Leader tab" }]);
+
+    // The second process cannot bind the port, so it joins the leader instead of failing.
+    follower = startBridgeOn(HUB_PORT);
+    expect(follower.listeningPort).toBeNull();
+    await waitFor(() => follower!.isConnected, "the follower to see the extension via the hub");
+
+    const response = await follower.sendToolRequest("list_tabs", {});
+    expect(response.result).toEqual([{ tabId: 3, title: "Leader tab" }]);
+    expect(follower.extensionVersion).toBe("1.0.0-test");
+  });
+
+  test("a follower reports the extension as disconnected once the leader loses it", async () => {
+    leader = startBridgeOn(HUB_PORT);
+    const extension = await authenticateOn(leader, "ef");
+
+    follower = startBridgeOn(HUB_PORT);
+    await waitFor(() => follower!.isConnected, "the follower to see the extension via the hub");
+
+    // Dropping the extension leaves the hub link intact but no browser to serve.
+    extension.close();
+    await waitFor(() => !follower!.isConnected, "the follower to observe the extension drop");
+
+    await expect(follower.sendToolRequest("list_tabs", {})).rejects.toThrow("Chrome extension is not connected");
+  });
+
+  test("a follower re-elects itself as leader when the hub goes away", async () => {
+    leader = startBridgeOn(HUB_PORT);
+    const firstExtension = await authenticateOn(leader, "ef");
+    answerListTabs(firstExtension, ["from the first leader"]);
+
+    follower = startBridgeOn(HUB_PORT);
+    await waitFor(() => follower!.isConnected, "the follower to join the hub");
+
+    // The leader's window closes and frees the port.
+    leader.stop();
+    leader = null;
+    firstExtension.close();
+
+    await waitFor(() => follower!.listeningPort === HUB_PORT, "the follower to take over the port", 6_000);
+
+    // The promoted leader owns the extension connection directly now.
+    const secondExtension = await authenticateOn(follower, "ab");
+    answerListTabs(secondExtension, ["from the promoted leader"]);
+
+    const response = await follower.sendToolRequest("list_tabs", {});
+    expect(response.result).toEqual(["from the promoted leader"]);
   });
 });

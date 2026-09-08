@@ -67,7 +67,7 @@ Set `ALLOY_MCP_TOKEN` to use an externally managed token, or `ALLOY_MCP_TOKEN_FI
 
 ### 4. Configure one MCP client
 
-> **One server only.** The MCP client owns the server process. Do not also run `bun run start` — both processes would compete for the same WebSocket port.
+> **One shared server.** The MCP client owns its server process. If you run several clients (or `bun run start`) at once, the first to launch becomes the hub that owns the Chrome connection and the rest detect and share it automatically, so they never compete for the WebSocket port.
 
 For **Claude Code**, run from this repository:
 

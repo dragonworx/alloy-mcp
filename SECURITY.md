@@ -34,6 +34,7 @@ Treat terminal output from `bun run pair` as sensitive.
 - The server binds to `localhost` by default.
 - WebSocket upgrades require a `chrome-extension://` origin.
 - Only one pending or authenticated extension connection is accepted.
+- Peer Alloy servers (followers) may relay through the leader over the same local port; each completes the same token-based HMAC handshake, and the follower path rejects any request that carries a browser `Origin`.
 - Handshakes time out after five seconds.
 - Incoming messages are capped at 32 MiB.
 - Heartbeats close unresponsive authenticated connections.
