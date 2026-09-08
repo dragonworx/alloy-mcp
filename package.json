@@ -1,6 +1,6 @@
 {
   "name": "alloy-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Alloy MCP - drive your existing Chrome profile from an MCP client",
   "type": "module",
   "scripts": {

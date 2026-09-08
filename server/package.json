@@ -1,6 +1,6 @@
 {
   "name": "alloy-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Alloy MCP server - bridges MCP tool calls to Chrome through a paired extension",
   "type": "module",
   "main": "src/server.ts",

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "name": "Alloy MCP",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Alloy MCP - bridges the local MCP server to your Chrome profile for AI-driven browser control",
   "permissions": [
     "tabs",
