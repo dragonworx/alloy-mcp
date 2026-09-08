@@ -7,3 +7,4 @@ artifacts/
 server/artifacts/
 .claude/settings.local.json
 **/.claude/settings.local.json
+.DS_Store

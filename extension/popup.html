@@ -21,6 +21,13 @@
       align-items: center;
       gap: 8px;
     }
+    .version {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 400;
+      font-family: monospace;
+      color: #a8b5ae;
+    }
     .status {
       display: flex;
       align-items: center;
@@ -108,7 +115,7 @@
   </style>
 </head>
 <body>
-  <h1>Alloy MCP</h1>
+  <h1>Alloy MCP<span class="version" id="versionValue"></span></h1>
 
   <div class="status" id="statusRow">
     <div class="dot pending" id="statusDot"></div>

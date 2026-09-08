@@ -36,6 +36,8 @@ function createHarness(options: HarnessOptions = {}) {
   const intervals: Array<() => void> = [];
   const detachListeners: Array<(source: { tabId?: number }) => void> = [];
   const detachResolvers: Array<() => void> = [];
+  const tabRemovedListeners: Array<(tabId: number) => void> = [];
+  const tabUpdatedListeners: Array<(tabId: number, changeInfo: Record<string, unknown>) => void> = [];
   let dynamicCleanupCalls = 0;
   let attachCalls = 0;
   let webSocketCalls = 0;
@@ -214,7 +216,12 @@ function createHarness(options: HarnessOptions = {}) {
         }
         return `data:image/png;base64,${btoa("tile")}`;
       },
-      onRemoved: { addListener() {} },
+      onRemoved: { addListener(listener: (tabId: number) => void) { tabRemovedListeners.push(listener); } },
+      onUpdated: {
+        addListener(listener: (tabId: number, changeInfo: Record<string, unknown>) => void) {
+          tabUpdatedListeners.push(listener);
+        },
+      },
     },
     scripting: {
       executeScript: async ({ func, args = [] }: { func: (...values: any[]) => any; args?: any[] }) => {
@@ -307,6 +314,12 @@ function createHarness(options: HarnessOptions = {}) {
     webSockets,
     emitDetach(tabId: number) {
       for (const listener of detachListeners) listener({ tabId });
+    },
+    emitTabRemoved(tabId: number) {
+      for (const listener of tabRemovedListeners) listener(tabId);
+    },
+    emitTabUpdated(tabId: number, changeInfo: Record<string, unknown>) {
+      for (const listener of tabUpdatedListeners) listener(tabId, changeInfo);
     },
     resolveNextDetach() {
       const resolveDetach = detachResolvers.shift();
@@ -792,6 +805,118 @@ describe("extension lifecycle", () => {
     expect(harness.visibleTabCaptures).toHaveLength(64);
     expect(harness.scrollCalls.at(-1)).toEqual({ left: 0, top: 25 });
   });
+
+  test("closing the target tab cancels the in-flight capture and frees the queue", async () => {
+    const captureGate = new Promise<void>(() => {}); // never resolves: capture stays in flight
+    const harness = createHarness({
+      autoDetach: true,
+      captureGate,
+      failDynamicCleanup: true,
+      immediateTimeouts: true,
+      tabs: [{ active: true, id: 7, windowId: 1 }],
+    });
+    await flushTasks();
+
+    const jammedCapture = harness.api.toolHandlers.take_screenshot({ format: "png", tabId: 7 });
+    const jammedOutcome = jammedCapture.then(() => "resolved", () => "rejected");
+    await settle();
+    expect(harness.visibleTabCaptures).toHaveLength(1);
+
+    harness.emitTabRemoved(7);
+    expect(await jammedOutcome).toBe("rejected");
+
+    await settle();
+    const nextCapture = harness.api.toolHandlers.take_screenshot({ format: "png", tabId: 7 });
+    nextCapture.catch(() => {});
+    await settle();
+    // The queue slot was released, so the next capture proceeds to capture
+    // instead of failing with "queue is busy".
+    expect(harness.visibleTabCaptures).toHaveLength(2);
+  });
+
+  test("navigating the target tab cancels the in-flight capture and frees the queue", async () => {
+    const captureGate = new Promise<void>(() => {});
+    const harness = createHarness({
+      autoDetach: true,
+      captureGate,
+      failDynamicCleanup: true,
+      immediateTimeouts: true,
+      tabs: [{ active: true, id: 7, windowId: 1 }],
+    });
+    await flushTasks();
+
+    const jammedCapture = harness.api.toolHandlers.take_screenshot({ format: "png", tabId: 7 });
+    const jammedOutcome = jammedCapture.then(() => "resolved", () => "rejected");
+    await settle();
+    expect(harness.visibleTabCaptures).toHaveLength(1);
+
+    harness.emitTabUpdated(7, { status: "loading" });
+    expect(await jammedOutcome).toBe("rejected");
+
+    await settle();
+    const nextCapture = harness.api.toolHandlers.take_screenshot({ format: "png", tabId: 7 });
+    nextCapture.catch(() => {});
+    await settle();
+    expect(harness.visibleTabCaptures).toHaveLength(2);
+  });
+
+  test("full-page capture falls back to the viewport when it is too tall", async () => {
+    const harness = createHarness({
+      autoDetach: true,
+      failDynamicCleanup: true,
+      immediateTimeouts: true,
+      page: {
+        contentHeight: 100_000,
+        contentWidth: 1200,
+        viewportHeight: 800,
+        viewportWidth: 1200,
+      },
+      tabs: [{ active: true, id: 7, windowId: 1 }],
+    });
+    await flushTasks();
+
+    const result = await harness.api.toolHandlers.take_screenshot({
+      format: "png",
+      fullPage: true,
+      fallbackToViewport: true,
+      tabId: 7,
+    });
+
+    expect(result.truncated).toBe(true);
+    expect(result.dimensions).toEqual({ width: 1200, height: 800 });
+  });
+
+  test("flushing the screenshot queue cancels an in-flight capture and frees it", async () => {
+    const captureGate = new Promise<void>(() => {});
+    const harness = createHarness({
+      autoDetach: true,
+      captureGate,
+      failDynamicCleanup: true,
+      immediateTimeouts: true,
+      tabs: [{ active: true, id: 7, windowId: 1 }],
+    });
+    await flushTasks();
+
+    const jammed = harness.api.toolHandlers.take_screenshot({ format: "png", tabId: 7 });
+    const jammedOutcome = jammed.then(() => "resolved", () => "rejected");
+    await settle();
+    expect(harness.visibleTabCaptures).toHaveLength(1);
+
+    const status = await harness.api.toolHandlers.screenshot_queue({ action: "status" });
+    expect(status.queueDepth).toBe(1);
+    expect(status.jobs[0]).toMatchObject({ tabId: 7, aborted: false });
+
+    const flush = await harness.api.toolHandlers.screenshot_queue({ action: "flush" });
+    expect(flush.flushed).toBe(1);
+    expect(await jammedOutcome).toBe("rejected");
+
+    await settle();
+    const next = harness.api.toolHandlers.take_screenshot({ format: "png", tabId: 7 });
+    next.catch(() => {});
+    await settle();
+    expect(harness.visibleTabCaptures).toHaveLength(2);
+  });
+
   test("a silent socket is reported stale rather than connected", async () => {
     const harness = await createConnectedHarness();
     const { CONNECTION } = harness.api;

@@ -932,6 +932,20 @@ let lastVisibleTabCapture = 0;
 const MAX_SCREENSHOT_TILES = 64;
 const SCREENSHOT_CAPTURE_TIMEOUT_MS = 45_000;
 const SCREENSHOT_QUEUE_TIMEOUT_MS = 5_000;
+const SCREENSHOT_CLEANUP_TIMEOUT_MS = 10_000;
+
+// In-flight/queued screenshot jobs, keyed by AbortController, so a closing or
+// navigating tab can abort its captures and free the queue instead of jamming it.
+const activeCaptureJobs = new Set();
+
+function cancelCaptureJobsForTab(tabId, reason) {
+  for (const job of activeCaptureJobs) {
+    if (job.tabId === tabId && !job.controller.signal.aborted) {
+      job.cancelReason = reason;
+      job.controller.abort();
+    }
+  }
+}
 
 function waitForScreenshotOperation(operation, signal) {
   if (!signal) return operation;
@@ -952,6 +966,20 @@ function waitForScreenshotOperation(operation, signal) {
       error => finish(reject, error)
     );
   });
+}
+
+// Resolves when the operation settles or the deadline elapses, whichever is
+// first, and never rejects. Used for best-effort cleanup that must never block
+// releasing the capture queue.
+function settleWithinDeadline(operation, timeoutMs) {
+  let timer;
+  const timeout = new Promise(resolve => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  return Promise.race([
+    Promise.resolve(operation).then(() => undefined, () => undefined),
+    timeout,
+  ]).finally(() => clearTimeout(timer));
 }
 
 function decodeBase64(encoded) {
@@ -1211,6 +1239,8 @@ async function withVisibleTab(tabId, callback) {
   let tab;
   let queueTimer;
   const captureController = new AbortController();
+  const captureJob = { tabId, controller: captureController, startedAt: Date.now() };
+  activeCaptureJobs.add(captureJob);
   const pendingMutations = new Set();
   const captureContext = {
     signal: captureController.signal,
@@ -1226,8 +1256,14 @@ async function withVisibleTab(tabId, callback) {
       return tracked;
     },
     async drainMutations() {
-      while (pendingMutations.size > 0) {
-        await Promise.allSettled(Array.from(pendingMutations));
+      const aborted = new Promise(resolve => {
+        if (captureController.signal.aborted) resolve();
+        else captureController.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      // Stop waiting once the job is aborted: the tracked operations are
+      // un-cancellable Chrome API promises that may never settle on a hung tab.
+      while (pendingMutations.size > 0 && !captureController.signal.aborted) {
+        await Promise.race([Promise.allSettled(Array.from(pendingMutations)), aborted]);
         await Promise.resolve();
       }
     },
@@ -1266,22 +1302,27 @@ async function withVisibleTab(tabId, callback) {
   } finally {
     captureController.abort();
     clearTimeout(queueTimer);
+    // Cleanup is best-effort and must never hold the queue: drainMutations is
+    // abort-aware and the page/tab restores are bounded by a deadline so a hung
+    // tab can no longer deadlock the queue slot.
     await captureContext.drainMutations();
     if (captureContext.restorePage && !captureContext.pageRestored) {
-      try {
-        await captureContext.restorePage();
-        await captureContext.drainMutations();
-      } catch {
-        // The target tab may have closed during capture.
-      }
+      await settleWithinDeadline((async () => {
+        try {
+          await captureContext.restorePage();
+          await captureContext.drainMutations();
+        } catch {
+          // The target tab may have closed during capture.
+        }
+      })(), SCREENSHOT_CLEANUP_TIMEOUT_MS);
     }
     if (tab && activeTab?.id != null) {
-      try {
-        await chrome.tabs.update(activeTab.id, { active: true });
-      } catch {
-        // The previously active tab may have closed during capture.
-      }
+      await settleWithinDeadline(
+        chrome.tabs.update(activeTab.id, { active: true }).catch(() => {}),
+        SCREENSHOT_CLEANUP_TIMEOUT_MS
+      );
     }
+    activeCaptureJobs.delete(captureJob);
     releaseCapture();
   }
 }
@@ -1661,35 +1702,55 @@ const toolHandlers = {
         );
         captureContext.pageRestored = true;
       };
-      const region = await getScreenshotRegion(tabId, params, page);
-      const dimensions = {
-        width: Math.ceil(region.width),
-        height: Math.ceil(region.height),
-      };
-      if (
-        dimensions.width > CONNECTION.limits.maxScreenshotDimension
-        || dimensions.height > CONNECTION.limits.maxScreenshotDimension
-      ) {
-        throw new Error(
-          `Screenshot exceeds the ${CONNECTION.limits.maxScreenshotDimension}px safety limit; capture a smaller element or viewport`
-        );
-      }
 
-      const canvas = await stitchScreenshot(
-        tabId,
-        windowId,
-        region,
-        dimensions,
-        page,
-        captureContext
-      );
-      const encoded = await encodeScreenshot(canvas, format, quality);
-      if (encoded.length > CONNECTION.limits.maxScreenshotPayloadBytes) {
-        throw new Error(
-          `Screenshot exceeds the ${CONNECTION.limits.maxScreenshotPayloadBytes}-byte encoded payload limit`
+      const renderRegion = async (region) => {
+        const dimensions = {
+          width: Math.ceil(region.width),
+          height: Math.ceil(region.height),
+        };
+        if (
+          dimensions.width > CONNECTION.limits.maxScreenshotDimension
+          || dimensions.height > CONNECTION.limits.maxScreenshotDimension
+        ) {
+          throw new Error(
+            `Screenshot exceeds the ${CONNECTION.limits.maxScreenshotDimension}px safety limit; capture a smaller element or viewport`
+          );
+        }
+        const canvas = await stitchScreenshot(
+          tabId,
+          windowId,
+          region,
+          dimensions,
+          page,
+          captureContext
         );
+        const encoded = await encodeScreenshot(canvas, format, quality);
+        if (encoded.length > CONNECTION.limits.maxScreenshotPayloadBytes) {
+          throw new Error(
+            `Screenshot exceeds the ${CONNECTION.limits.maxScreenshotPayloadBytes}-byte encoded payload limit`
+          );
+        }
+        return { dimensions, image: encoded };
+      };
+
+      const region = await getScreenshotRegion(tabId, params, page);
+      if (!(params.fullPage && params.fallbackToViewport)) {
+        return renderRegion(region);
       }
-      return { dimensions, image: encoded };
+      try {
+        return await renderRegion(region);
+      } catch (error) {
+        // A full page too tall/slow to stitch falls back to the visible viewport
+        // so callers still get a usable image instead of an error.
+        if (captureContext.signal.aborted) throw error;
+        const viewport = await renderRegion({
+          x: page.scrollX,
+          y: page.scrollY,
+          width: page.viewportWidth,
+          height: page.viewportHeight,
+        });
+        return { ...viewport, truncated: true };
+      }
     });
 
     const mimeType = `image/${format}`;
@@ -1698,11 +1759,42 @@ const toolHandlers = {
       format,
       dimensions: screenshot.dimensions,
       mimeType,
+      ...(screenshot.truncated ? { truncated: true } : {}),
     };
   },
 
   async capture_element(params) {
     return toolHandlers.take_screenshot(params);
+  },
+
+  // Inspect or clear the screenshot capture queue without a full extension
+  // restart. Runs outside withVisibleTab so it is never blocked by the queue.
+  async screenshot_queue(params) {
+    const action = params?.action === "flush" ? "flush" : "status";
+    const now = Date.now();
+    const jobs = Array.from(activeCaptureJobs, job => ({
+      tabId: job.tabId,
+      ageMs: now - job.startedAt,
+      aborted: job.controller.signal.aborted,
+      cancelReason: job.cancelReason ?? null,
+    }));
+
+    if (action === "flush") {
+      let flushed = 0;
+      for (const job of activeCaptureJobs) {
+        if (!job.controller.signal.aborted) {
+          job.cancelReason = "flushed";
+          job.controller.abort();
+          flushed++;
+        }
+      }
+      // Hard-reset the serialization chain so a fresh capture starts cleanly
+      // even if an aborted job's best-effort cleanup is still winding down.
+      visibleTabCaptureQueue = Promise.resolve();
+      return { action, flushed, jobs };
+    }
+
+    return { action, queueDepth: activeCaptureJobs.size, jobs };
   },
 
   // ── Network Monitoring ──────────────────────────────────────────
@@ -2959,6 +3051,7 @@ chrome.webNavigation.onCommitted.addListener((details) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  cancelCaptureJobsForTab(tabId, "tab removed");
   for (const [monitoringId, session] of networkLogs) {
     if (session.tabId === tabId) networkLogs.delete(monitoringId);
   }
@@ -2968,6 +3061,10 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 
   const session = debuggerSessions.get(tabId);
   if (session) await detachDebuggerSession(tabId, session);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === "loading") cancelCaptureJobsForTab(tabId, "tab navigated");
 });
 
 // ─── Popup communication ────────────────────────────────────────────

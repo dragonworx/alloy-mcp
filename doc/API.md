@@ -57,8 +57,13 @@ Pointer, hover, keyboard, and text insertion use the Chrome Debugger Protocol wh
 
 - `take_screenshot`
 - `capture_element`
+- `screenshot_queue`
 
 `take_screenshot` supports visible viewport, `fullPage`, or `selector` capture through rate-limited visible-tab tiles. The target tab is temporarily activated for each tile and the previously active tab is restored afterward. Capture fails if another tab becomes active during a tile. A single dimension may not exceed 4096 pixels, a capture may use at most 64 tiles, and encoded image data may not exceed 24 MiB.
+
+Every capture runs under a per-job timeout and abort controller: it either completes or fails cleanly and always releases the capture queue, and closing or navigating the target tab cancels its in-flight capture. When `fullPage: true` and `fallbackToViewport: true`, a page too tall or slow to stitch falls back to a visible-viewport capture and the result is marked `truncated`.
+
+`screenshot_queue` inspects or clears that queue without restarting the extension: `action: "status"` (default) reports queue depth and in-flight jobs (tab id, age); `action: "flush"` cancels all in-flight and queued captures to clear a jam. `health_check` also reports the same screenshot-subsystem state.
 
 When `filePath` is provided, it is relative to `ALLOY_MCP_OUTPUT_DIR` (default `./artifacts`). The private output tree rejects traversal, symbolic links, non-regular targets, and multiply linked files. Otherwise the result is MCP image content.
 

@@ -77,6 +77,25 @@ function pingResult(bridge: WebSocketBridge): CallToolResult {
   };
 }
 
+async function roundTripProbe(bridge: WebSocketBridge): Promise<Record<string, unknown>> {
+  const start = Date.now();
+  try {
+    const response = await bridge.sendToolRequest("list_tabs", { activeOnly: true });
+    return { success: !response.error, latencyMs: Date.now() - start, error: response.error?.message };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
+async function screenshotQueueProbe(bridge: WebSocketBridge): Promise<unknown> {
+  try {
+    const response = await bridge.sendToolRequest("screenshot_queue", { action: "status" });
+    return response.error ? { error: response.error.message } : response.result;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
 async function healthCheckResult(bridge: WebSocketBridge): Promise<CallToolResult> {
   const checks: Record<string, unknown> = {
     server: "online",
@@ -88,19 +107,9 @@ async function healthCheckResult(bridge: WebSocketBridge): Promise<CallToolResul
   };
 
   if (bridge.isConnected) {
-    const start = Date.now();
-    try {
-      const response = await bridge.sendToolRequest("list_tabs", { activeOnly: true });
-      checks.roundTrip = {
-        success: !response.error,
-        latencyMs: Date.now() - start,
-        error: response.error?.message,
-      };
-    } catch (error) {
-      checks.roundTrip = {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      };
+    checks.roundTrip = await roundTripProbe(bridge);
+    if (bridge.extensionCapabilities.includes("screenshot_queue")) {
+      checks.screenshots = await screenshotQueueProbe(bridge);
     }
   }
 
@@ -181,7 +190,7 @@ function formatScreenshotResponse(
     return {
       content: [
         { type: "image", data: imageData, mimeType: (result.mimeType as string) || "image/png" },
-        { type: "text", text: JSON.stringify({ dimensions: result.dimensions, format: result.format }) },
+        { type: "text", text: JSON.stringify({ dimensions: result.dimensions, format: result.format, ...(result.truncated ? { truncated: true } : {}) }) },
       ],
     };
   } catch (error) {

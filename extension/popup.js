@@ -152,6 +152,11 @@ pairingToken.addEventListener("input", () => {
   pairError.textContent = "";
 });
 
+// Show the installed extension version, sourced from the manifest.
+const versionValue = document.getElementById("versionValue");
+const manifest = chrome.runtime.getManifest?.();
+if (versionValue && manifest) versionValue.textContent = `v${manifest.version}`;
+
 // Verify on open so the badge reflects the server's view, not just ours.
 verifyStatus();
 setInterval(fetchStatus, 2000);

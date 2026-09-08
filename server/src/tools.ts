@@ -205,6 +205,13 @@ export const screenshotTools = {
       format: z.enum(["png", "jpeg"]).default("png"),
     }),
   },
+  screenshot_queue: {
+    description:
+      "Inspect or clear the screenshot capture queue. action='status' (default) reports queue depth and in-flight jobs; action='flush' cancels all in-flight and queued captures to clear a jam without restarting the extension.",
+    schema: z.object({
+      action: z.enum(["status", "flush"]).default("status"),
+    }),
+  },
 } as const;
 
 // ─── Network Monitoring Tools ────────────────────────────────────────
